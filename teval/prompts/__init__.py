@@ -13,11 +13,13 @@ from .registry import (
     register_prompt_framework,
 )
 from .dual_plan import DualPlanFramework
+from .react import ReActFramework
 
 __all__ = [
     "PromptFramework",
     "DatasetPassthroughFramework",
     "DualPlanFramework",
+    "ReActFramework",
     "build_prompt_framework",
     "list_prompt_frameworks",
     "register_prompt_framework",
