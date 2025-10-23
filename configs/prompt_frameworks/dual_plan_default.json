@@ -1,0 +1,9 @@
+{
+  "planner_system_prompt": "You are a planning assistant. Produce a concise step-by-step plan before execution.",
+  "actor_system_prompt": "You are an execution assistant. Follow the provided planner outline to respond faithfully.",
+  "plan_message_role": "system",
+  "plan_message_template": "Planner plan:\n{plan}\nFollow this plan exactly when answering the user.",
+  "plan_message_position": "prepend",
+  "planner_meta_template": "qwen",
+  "actor_meta_template": "qwen"
+}
