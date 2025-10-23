@@ -10,8 +10,9 @@
    python test.py --prompt_framework passthrough ...
    python test.py --prompt_framework dual_plan --prompt_params configs/prompt_frameworks/dual_plan_default.json ...
    ```
-2. Frameworks can emit meta-template hints. When present, the runner prefers them over CLI defaults.
-3. Add custom frameworks by registering subclasses of `PromptFramework` in `teval/prompts`.
+2. Control how injected system prompts interact with dataset prompts via `--system_prompt_mode` (`overwrite` by default, use `prepend` to keep the original prompt and add the injected one ahead of it).
+3. Frameworks can emit meta-template hints. When present, the runner prefers them over CLI defaults.
+4. Add custom frameworks by registering subclasses of `PromptFramework` in `teval/prompts`.
 
 ## Dual-Model Mode
 1. Prepare planner and actor models:

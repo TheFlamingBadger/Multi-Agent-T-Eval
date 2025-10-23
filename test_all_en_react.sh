@@ -23,6 +23,7 @@ react_params_default="configs/prompt_frameworks/react_default.json"
 model_mode=${MODEL_MODE:-single}
 prompt_framework=${PROMPT_FRAMEWORK:-react}
 prompt_params=${PROMPT_PARAMS:-$react_params_default}
+system_prompt_mode=${SYSTEM_PROMPT_MODE:-prepend}
 planner_model_path_env=${PLANNER_MODEL_PATH:-}
 actor_model_path_env=${ACTOR_MODEL_PATH:-}
 planner_model_type_env=${PLANNER_MODEL_TYPE:-}
@@ -32,11 +33,12 @@ actor_meta_template_env=${ACTOR_META_TEMPLATE:-}
 
 echo "Model mode: $model_mode"
 echo "Prompt framework: $prompt_framework"
+echo "System prompt mode: $system_prompt_mode"
 if [ -n "$prompt_params" ]; then
     echo "Prompt params source: $prompt_params"
 fi
 
-common_args=(--model_type "$model_type" --model_mode "$model_mode" --prompt_framework "$prompt_framework")
+common_args=(--model_type "$model_type" --model_mode "$model_mode" --prompt_framework "$prompt_framework" --system_prompt_mode "$system_prompt_mode")
 if [ -n "$prompt_params" ]; then
     common_args+=(--prompt_params "$prompt_params")
 fi

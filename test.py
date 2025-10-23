@@ -58,6 +58,17 @@ def parse_args():
         help="Name of the prompt framework to transform dataset samples.",
     )
     parser.add_argument(
+        "--system_prompt_mode",
+        type=str,
+        choices=["overwrite", "prepend"],
+        default="overwrite",
+        help=(
+            "Control how injected system prompts interact with dataset prompts. "
+            "'overwrite' replaces the dataset system prompt, while 'prepend' keeps "
+            "the original and adds the injected prompt in front."
+        ),
+    )
+    parser.add_argument(
         "--prompt_params",
         type=str,
         default=None,
@@ -267,7 +278,9 @@ if __name__ == "__main__":
                 raise ValueError(
                     f"Failed to parse prompt params as JSON: {args.prompt_params}"
                 ) from exc
-    prompt_framework = build_prompt_framework(args.prompt_framework, **prompt_params)
+    framework_kwargs = dict(prompt_params) if isinstance(prompt_params, dict) else {}
+    framework_kwargs["system_prompt_mode"] = args.system_prompt_mode
+    prompt_framework = build_prompt_framework(args.prompt_framework, **framework_kwargs)
     dataset, tested_num, total_num = load_dataset(
         args.dataset_path, args.out_dir, args.resume, tmp_folder_name=tmp_folder_name
     )
