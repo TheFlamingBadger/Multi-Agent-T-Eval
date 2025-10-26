@@ -2,22 +2,66 @@
 
 set -euo pipefail
 
-export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-1}
-
-if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
-    echo "Usage: $0 <model_type> <model_path> <display_name> [meta_template]"
+usage() {
+    echo "Usage: $0 <model_type> <model_path> <display_name> [meta_template] [--gpus <ids>]"
     exit 1
+}
+
+default_gpu="${CUDA_VISIBLE_DEVICES:-1}"
+gpu_ids="$default_gpu"
+gpu_overridden=false
+
+if [ "$#" -lt 3 ]; then
+    usage
 fi
 
 model_type=$1
 model_path=$2
 display_name=$3
-meta_template=${4:-nan}
+shift 3
+
+meta_template="nan"
+if [ "$#" -gt 0 ] && [ "$1" != "--gpus" ]; then
+    meta_template=$1
+    if [ -z "$meta_template" ]; then
+        meta_template="nan"
+    fi
+    shift
+fi
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --gpus)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "Missing value for --gpus" >&2
+                exit 1
+            fi
+            gpu_ids=$1
+            gpu_overridden=true
+            shift
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage
+            ;;
+    esac
+done
+
+if $gpu_overridden; then
+    if [[ ! "$gpu_ids" =~ ^[0-3](,[0-3])*$ ]]; then
+        echo "Invalid GPU id list: '$gpu_ids'. Expected digits 0-3 optionally comma-separated." >&2
+        exit 1
+    fi
+fi
+
+export CUDA_VISIBLE_DEVICES="$gpu_ids"
 
 echo "model_type: $model_type"
 echo "load model from: $model_path"
 echo "Model display name: $display_name"
 echo "Model meta_template: $meta_template"
+echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
 react_params_default="configs/prompt_frameworks/react_default.json"
 model_mode=${MODEL_MODE:-single}

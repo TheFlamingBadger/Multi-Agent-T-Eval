@@ -2,11 +2,17 @@
 
 set -euo pipefail
 
-export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-1}
-
-if [ "$#" -lt 5 ] || [ "$#" -gt 7 ]; then
-    echo "Usage: $0 <planner_model_type> <planner_model_path> <actor_model_type> <actor_model_path> <actor_display_name> [planner_meta_template] [actor_meta_template]"
+usage() {
+    echo "Usage: $0 <planner_model_type> <planner_model_path> <actor_model_type> <actor_model_path> <actor_display_name> [planner_meta_template] [actor_meta_template] [--gpus <ids>]"
     exit 1
+}
+
+default_gpu="${CUDA_VISIBLE_DEVICES:-1}"
+gpu_ids="$default_gpu"
+gpu_overridden=false
+
+if [ "$#" -lt 5 ]; then
+    usage
 fi
 
 planner_model_type=$1
@@ -14,8 +20,48 @@ planner_model_path=$2
 actor_model_type=$3
 actor_model_path=$4
 actor_display_name=$5
-planner_meta_template_arg=${6:-}
-actor_meta_template_arg=${7:-}
+shift 5
+
+planner_meta_template_arg=""
+actor_meta_template_arg=""
+
+if [ "$#" -gt 0 ] && [ "$1" != "--gpus" ]; then
+    planner_meta_template_arg=$1
+    shift
+fi
+
+if [ "$#" -gt 0 ] && [ "$1" != "--gpus" ]; then
+    actor_meta_template_arg=$1
+    shift
+fi
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --gpus)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "Missing value for --gpus" >&2
+                exit 1
+            fi
+            gpu_ids=$1
+            gpu_overridden=true
+            shift
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage
+            ;;
+    esac
+done
+
+if $gpu_overridden; then
+    if [[ ! "$gpu_ids" =~ ^[0-3](,[0-3])*$ ]]; then
+        echo "Invalid GPU id list: '$gpu_ids'. Expected digits 0-3 optionally comma-separated." >&2
+        exit 1
+    fi
+fi
+
+export CUDA_VISIBLE_DEVICES="$gpu_ids"
 
 planner_meta_template=${planner_meta_template_arg:-${PLANNER_META_TEMPLATE:-nan}}
 actor_meta_template=${actor_meta_template_arg:-${ACTOR_META_TEMPLATE:-nan}}
@@ -27,6 +73,7 @@ echo "actor_model_path: $actor_model_path"
 echo "Actor display name: $actor_display_name"
 echo "Planner meta_template: $planner_meta_template"
 echo "Actor meta_template: $actor_meta_template"
+echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
 model_mode=dual
 prompt_framework=${PROMPT_FRAMEWORK:-dual_plan}
