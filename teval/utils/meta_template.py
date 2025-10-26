@@ -52,6 +52,12 @@ meta_template_dict = dict(
         dict(role="system", begin="<|system|>\n", end="<|end|>\n"),
         dict(role="user", begin="<|user|>\n", end="<|end|>\n"),
         dict(role="function", begin="<|user|>\n", end="<|end|>\n"),
+        dict(
+            role="assistant",
+            begin="<|assistant|>\n",
+            end="<|end|>\n",
+            generate=True,
+        ),
     ],
     qwen2_5=[
         dict(role="system", begin="<|im_start|>system\n", end="<|im_end|>\n"),
@@ -76,5 +82,20 @@ meta_template_dict = dict(
         ),
         dict(role="user", begin="<<question>>", end="\n"),
         dict(role="assistant", begin="### Response:", end="", generate=True),
+    ],
+    qwq=[
+        dict(role="system", begin="<|im_start|>system\n", end="<|im_end|>\n"),
+        dict(role="user", begin="<|im_start|>user\n", end="<|im_end|>\n"),
+        dict(
+            role="assistant",
+            begin="<|im_start|>assistant\n",
+            end="<|im_end|>\n",
+            generate=True,
+        ),
+        dict(
+            role="tool",
+            begin="<|im_start|>user\n<tool_response>\n",
+            end="</tool_response><|im_end|>\n",
+        ),
     ],
 )
