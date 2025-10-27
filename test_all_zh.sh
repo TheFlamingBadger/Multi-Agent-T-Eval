@@ -114,26 +114,26 @@ if [ "$model_mode" = "dual" ]; then
     fi
 fi
 
-echo "\n\nEvaluating 'Instruct' Dataset [1/8]"
+echo "Evaluating 'Instruct' Dataset [1/8]"
 python test.py $common_args --resume --out_name instruct_${run_suffix}.json --out_dir work_dirs/$run_suffix/ --dataset_path data/instruct_v2_zh.json --eval instruct --prompt_type json --model_path $model_path --model_display_name $display_name --meta_template $meta_template
 
-echo "\n\nEvaluating 'Review' Dataset [2/8]"
+echo "Evaluating 'Review' Dataset [2/8]"
 python test.py $common_args --resume --out_name review_str_${run_suffix}.json --out_dir work_dirs/$run_suffix/ --dataset_path data/review_str_v2_zh.json --eval review --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template
 
-echo "\n\nEvaluating 'Plan' JSON Dataset [3/8]"
+echo "Evaluating 'Plan' JSON Dataset [3/8]"
 python test.py $common_args --resume --out_name plan_json_${run_suffix}.json --out_dir work_dirs/$run_suffix/ --dataset_path data/plan_json_v2_zh.json --eval plan --prompt_type json --model_path $model_path --model_display_name $display_name --meta_template $meta_template
 
-echo "\n\nEvaluating 'Plan' String Dataset [4/8]"
+echo "Evaluating 'Plan' String Dataset [4/8]"
 python test.py $common_args --resume --out_name plan_str_${run_suffix}.json --out_dir work_dirs/$run_suffix/ --dataset_path data/plan_str_v2_zh.json --eval plan --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template
 
-echo "\n\nEvaluating 'Reason' String Dataset [5/8]"
+echo "Evaluating 'Reason' String Dataset [5/8]"
 python test.py $common_args --resume --out_name reason_str_${run_suffix}.json --out_dir work_dirs/$run_suffix/ --dataset_path data/reason_str_v2_zh.json --eval reason --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template
 
-echo "\n\nEvaluating 'Retrieve' String Dataset [6/8]"
+echo "Evaluating 'Retrieve' String Dataset [6/8]"
 python test.py $common_args --resume --out_name retrieve_str_${run_suffix}.json --out_dir work_dirs/$run_suffix/ --dataset_path data/retrieve_str_v2_zh.json --eval retrieve --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template
 
-echo "\n\nEvaluating 'Understand' String Dataset [7/8]"
+echo "Evaluating 'Understand' String Dataset [7/8]"
 python test.py $common_args --resume --out_name understand_str_${run_suffix}.json --out_dir work_dirs/$run_suffix/ --dataset_path data/understand_str_v2_zh.json --eval understand --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template
 
-echo "\n\nEvaluating 'Reason, Retrieve, Understand' (RRU) JSON Dataset [8/8]"
+echo "Evaluating 'Reason, Retrieve, Understand' (RRU) JSON Dataset [8/8]"
 python test.py $common_args --resume --out_name reason_retrieve_understand_json_${run_suffix}.json --out_dir work_dirs/$run_suffix/ --dataset_path data/reason_retrieve_understand_json_v2_zh.json --eval rru --prompt_type json --model_path $model_path --model_display_name $display_name --meta_template $meta_template

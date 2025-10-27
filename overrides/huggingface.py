@@ -3,8 +3,14 @@ import logging
 from typing import Dict, List, Optional, Union
 
 from lagent.schema import ModelStatusCode
-from ..lagent.lagent.llms.base_api import APITemplateParser
-from ..lagent.lagent.llms.base_llm import BaseLLM
+
+try:
+    # When this file is copied into lagent/lagent/llms/, these relative imports resolve.
+    from .base_api import APITemplateParser  # type: ignore
+    from .base_llm import BaseLLM  # type: ignore
+except ImportError:  # pragma: no cover - allows running directly from overrides/
+    from ..lagent.lagent.llms.base_api import APITemplateParser  # type: ignore
+    from ..lagent.lagent.llms.base_llm import BaseLLM  # type: ignore
 
 logger = logging.getLogger(__name__)
 
