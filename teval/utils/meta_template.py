@@ -73,6 +73,7 @@ meta_template_dict = dict(
             begin="<|im_start|>user\n<tool_response>\n",
             end="</tool_response><|im_end|>\n",
         ),
+        dict(role="function", begin=r"<|im_start|>function\n", end=r"<|im_end|>\n"),
     ],
     gorilla_openfunctions_v2=[
         dict(

@@ -16,6 +16,21 @@ from ..schema import ModelStatusCode
 from ..utils import filter_suffix
 from .base_api import AsyncBaseAPILLM, BaseAPILLM
 
+try:
+    from dotenv import load_dotenv, find_dotenv
+except ImportError:  # python-dotenv is optional at runtime
+    load_dotenv = None
+    find_dotenv = None
+else:
+
+    def _load_dotenv_once() -> None:
+        """Load variables from the nearest .env so Azure configs are available."""
+        dotenv_path = find_dotenv(usecwd=True)
+        if dotenv_path:
+            load_dotenv(dotenv_path=dotenv_path, override=False)
+
+    _load_dotenv_once()
+
 warnings.simplefilter("default")
 
 DEFAULT_OPENAI_API_BASE = "https://api.openai.com/v1/chat/completions"

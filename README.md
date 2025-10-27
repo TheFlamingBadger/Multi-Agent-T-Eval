@@ -1,188 +1,174 @@
-# T-Eval: Evaluating the Tool Utilization Capability of Large Language Models Step by Step
+# Multi-Agent T-Eval
 
-[![arXiv](https://img.shields.io/badge/arXiv-2312.14033-b31b1b.svg)](https://arxiv.org/abs/2312.14033)
-[![license](https://img.shields.io/github/license/InternLM/opencompass.svg)](./LICENSE)
+An evaluation harness for the [T-Eval benchmark](https://arxiv.org/abs/2312.14033) that focuses on tool-use capability of large language models. This repository began as a fork of the original [open-compass/T-Eval](https://github.com/open-compass/T-Eval) project; upstream documentation and assets still apply, but this fork layers on dual-agent orchestration, additional prompt frameworks, and workflow tooling tailored for multi-agent experiments.
 
-## ✨ Introduction  
+## Upstream Project Snapshot
 
-This is an evaluation harness for the benchmark described in [T-Eval: Evaluating the Tool Utilization Capability of Large Language Models Step by Step](https://arxiv.org/abs/2312.14033). 
+T-Eval measures performance along six tool-usage skills—**instruction**, **planning**, **reasoning**, **retrieval**, **understanding**, and **review**—by replaying multi-turn task traces and scoring model responses. For background and official results, see:
 
-[[Paper](https://arxiv.org/abs/2312.14033)]
-[[Project Page](https://open-compass.github.io/T-Eval/)]
-[[LeaderBoard](https://open-compass.github.io/T-Eval/leaderboard.html)]
-[[HuggingFace](https://huggingface.co/datasets/lovesnowbest/T-Eval)]
+- Paper: [T-Eval: Evaluating the Tool Utilization Capability of Large Language Models Step by Step](https://arxiv.org/abs/2312.14033)
+- Project hub: [open-compass.github.io/T-Eval](https://open-compass.github.io/T-Eval/)
+- Leaderboards: [English](https://open-compass.github.io/T-Eval/leaderboard.html) • [Chinese](https://open-compass.github.io/T-Eval/leaderboard_zh.html)
+- Dataset: [Hugging Face – lovesnowbest/T-Eval](https://huggingface.co/datasets/lovesnowbest/T-Eval) (EN & ZH)
 
-> Large language models (LLM) have achieved remarkable performance on various NLP tasks and are augmented by tools for broader applications. Yet, how to evaluate and analyze the tool utilization capability of LLMs is still under-explored. In contrast to previous works that evaluate models holistically, we comprehensively decompose the tool utilization into multiple sub-processes, including instruction following, planning, reasoning, retrieval, understanding, and review. Based on that, we further introduce T-Eval to evaluate the tool-utilization capability step by step. T-Eval disentangles the tool utilization evaluation into several sub-domains along model capabilities, facilitating the inner understanding of both holistic and isolated competency of LLMs. We conduct extensive experiments on T-Eval and in-depth analysis of various LLMs. T-Eval not only exhibits consistency with the outcome-oriented evaluation but also provides a more fine-grained analysis of the capabilities of LLMs, providing a new perspective in LLM evaluation on tool-utilization ability.
+## What This Fork Adds
 
-<div>
-<center>
-<img src="figs/teaser.png">
-</div>
+Highlights of the fork-specific functionality:
 
-## 🚀 What's New
+- **Configurable ReAct pipeline** – adds the `react` prompt framework plus a `test_all_en_react.sh` runner with overrideable system prompts.
+- **Dual-agent evaluation loop** – introduces `test_all_en_react_dual.sh`, the `DualStageLLM` coordinator, and `SYSTEM_PROMPT_MODE` plumbing for planner/actor prompt injection.
+- **Per-framework work_dirs** – caches now include a `framework_mode_display` suffix so repeated runs don’t collide.
+- **GPU pinning & runtime improvements** – scripted `--gpus` selection alongside additional meta templates (e.g., QwQ) and Lagent overrides.
 
-- **[2024.02.22]** Release new [data](https://drive.google.com/file/d/1AqFOV7mVnVMy7gr3DyryHtIAPVarIITw/view?usp=sharing) and [1/5 subset](https://drive.google.com/file/d/1DgCMjquEIJ2v14Xu6uB6w3UEzaYXZbUL/view?usp=sharing)(both Chinese and English) and code for faster inference! 🚀🚀🚀 The leaderboard will be updated soon! We also provide template examples for reference~
-- **[2024.01.08]** Release [ZH Leaderboard](https://open-compass.github.io/T-Eval/leaderboard_zh.html) and ~~[ZH data](https://drive.google.com/file/d/1z25duwZAnBrPN5jYu9-8RMvfqnwPByKV/view?usp=sharing)~~, where the questions and answer formats are in Chinese. （公布了中文评测数据集和榜单）✨✨✨
-- **[2023.12.22]** Paper available on [ArXiv](https://arxiv.org/abs/2312.14033). 🔥🔥🔥
-- **[2023.12.21]** Release the test scripts and data for T-Eval. 🎉🎉🎉
+Additional quality-of-life changes span requirements updates, prompt parameter defaults, and improved resume semantics.
 
-## 🧾 TODO
+## Repository Layout
 
-- [x] Support Batch Inference. NOTE: Some models (ChatGLM, Qwen, InternV1) does not support batch inference.
-- [x] Change the role of function response from `system` to `function`.
-- [x] Merge consecutive same role conversations.
-- [x] Provide template configs for open-sourced models.
-- [x] Provide dev set for T-Eval, reducing the evaluation time.
-- [x] Optimize the inference pipeline of huggingface model provided by Lagent, which will be 3x faster. **(Please upgrade Lagent to v0.2)**
-- [ ] Support inference on Opencompass.
+```
+.
+├── configs/                 # Prompt framework presets (dual_plan_react_default.json, etc.)
+├── data/                    # Place benchmark JSON here (instruct_v2.json, …)
+├── teval/
+│   ├── llms/dual_agent.py   # DualStageLLM planner+actor coordinator
+│   └── prompts/             # Prompt framework registry, ReAct & DualPlan implementations
+├── test.py                  # Core evaluation driver
+├── test_all_en.sh           # Single-model full benchmark runner
+├── test_all_en_react.sh     # ReAct-optimized single-model runner
+└── test_all_en_react_dual.sh# Planner+actor full benchmark runner
+```
 
-~~NOTE: These TODOs will be started after 2024.2.1~~ Thanks for your patience!
-
-## 🛠️ Preparations
+## Setup
 
 ```bash
-$ git clone https://github.com/open-compass/T-Eval.git
-$ cd T-Eval
-$ pip install -r requirements.txt
-$ git clone https://github.com/InternLM/lagent.git
-$ cd lagent && pip install -e .
+git clone https://github.com/open-compass/T-Eval.git
+# or clone this fork directly
+git clone https://github.com/TheFlamingBadger/Multi-Agent-T-Eval.git
+cd Multi-Agent-T-Eval
+pip install -r requirements.txt
+
+# Lagent (planner/actor backends for HuggingFace models)
+git clone https://github.com/InternLM/lagent.git
+cd lagent && pip install -e .
 ```
 
-##  🛫️ Get Started
+Download benchmark data and place it under `data/`:
 
-We support both API-based models and HuggingFace models via [Lagent](https://github.com/InternLM/lagent).
-
-### 💾 Test Data
-
-We provide both google drive & huggingface dataset to download test data:
-
-1. Google Drive
-
-~~[[EN data](https://drive.google.com/file/d/1ebR6WCCbS9-u2x7mWpWy8wV_Gb6ltgpi/view?usp=sharing)] (English format) [[ZH data](https://drive.google.com/file/d/1z25duwZAnBrPN5jYu9-8RMvfqnwPByKV/view?usp=sharing)] (Chinese format)~~
-[T-Eval Data](https://drive.google.com/file/d/1nQ0pn26qd0FGU8UkfSTxNdu6uWI0QXTY/view?usp=sharing)
-
-2. HuggingFace Datasets
-
-You can also access the dataset through huggingface via this [link](https://huggingface.co/datasets/lovesnowbest/T-Eval).
-
-```python
+```bash
+mkdir -p data
+# Hugging Face
+python - <<'PY'
 from datasets import load_dataset
 dataset = load_dataset("lovesnowbest/T-Eval")
+dataset.save_to_disk("data/raw")
+PY
+
+# Or grab the official ZIP from Google Drive and unpack into data/
 ```
 
-After downloading, please put the data in the `data` folder directly:
+Expect the following structure:
+
 ```
-- data/
-  - instruct_v2.json
-  - plan_json_v2.json
+data/
+  instruct_v2.json
+  plan_json_v2.json
   ...
 ```
 
-### 🤖 API Models
+## Prompt Frameworks
 
-1. Set your OPENAI key in your environment.
+This fork ships two higher-level prompt rewrites:
+
+- `passthrough` – original behavior; dataset messages are forwarded unchanged.
+- `react` – injects tool-trace cues following ReAct-style prompting.
+- `dual_plan` – builds `planner_messages` and `actor_messages` and controls how the planner’s plan is inserted (prepend vs append) before actor execution.
+
+Use `PROMPT_FRAMEWORK` to choose a framework and `PROMPT_PARAMS` to point to a JSON preset (see `configs/prompt_frameworks/`). `SYSTEM_PROMPT_MODE` (`overwrite` or `prepend`) determines how injected system prompts interact with dataset-provided system messages; `test.py` enforces those choices.
+
+## Running Evaluations
+
+### API Models
+
 ```bash
-export OPENAI_API_KEY=xxxxxxxxx
-```
-2. Run the model with the following scripts
-```bash
-# test all data at once
+export OPENAI_API_KEY=sk-...
 sh test_all_en.sh api gpt-4-1106-preview gpt4
-# test ZH dataset
-sh test_all_zh.sh api gpt-4-1106-preview gpt4
-# test for Instruct only
-python test.py --model_type api --model_path gpt-4-1106-preview --resume --out_name instruct_gpt4.json --out_dir work_dirs/gpt4/ --dataset_path data/instruct_v2.json --eval instruct --prompt_type json
 ```
 
-### 🤗 HuggingFace Models
+### HuggingFace Models (single-LLM)
 
-1. Download the huggingface model to your local path.
-2. Modify the `meta_template` json according to your tested model.
-3. Run the model with the following scripts
 ```bash
-# test all data at once
-sh test_all_en.sh hf $HF_PATH $HF_MODEL_NAME $META_TEMPLATE
-# test ZH dataset
-sh test_all_zh.sh hf $HF_PATH $HF_MODEL_NAME $META_TEMPLATE
-# test for Instruct only
-python test.py --model_type hf --model_path $HF_PATH --resume --out_name instruct_$HF_MODEL_NAME.json --out_dir data/work_dirs/ --dataset_path data/instruct_v1.json --eval instruct --prompt_type json --model_display_name $HF_MODEL_NAME --meta_template $META_TEMPLATE
+export MODEL_MODE=single
+export PROMPT_FRAMEWORK=passthrough   # or react
+sh test_all_en.sh hf /path/to/model vicuna-13b meta_template_name
 ```
 
-### 💫 Final Results
-Once you finish all tested samples, a detailed evluation results will be logged at `$out_dir/$model_display_name/$model_display_name_-1.json` (For ZH dataset, there is a `_zh` suffix). To obtain your final score, please run the following command:
+### ReAct Workflow
+
+The ReAct script preconfigures sensible defaults:
+
 ```bash
-python teval/utils/convert_results.py --result_path $out_dir/$model_display_name/$model_display_name_-1.json
+export PROMPT_FRAMEWORK=react
+# Optional JSON for tool-specific instructions
+export PROMPT_PARAMS=configs/prompt_frameworks/react_default.json
+sh test_all_en_react.sh hf /path/to/model my-model meta_template
 ```
 
-## 🔌 Protocols
+### Dual-Agent Planner + Actor
 
-T-Eval adopts multi-conversation style evaluation to gauge the model. The format of our saved prompt is as follows:
-```python
-[
-    {
-        "role": "system",
-        "content": "You have access to the following API:\n{'name': 'AirbnbSearch.search_property_by_place', 'description': 'This function takes various parameters to search properties on Airbnb.', 'required_parameters': [{'name': 'place', 'type': 'STRING', 'description': 'The name of the destination.'}], 'optional_parameters': [], 'return_data': [{'name': 'property', 'description': 'a list of at most 3 properties, containing id, name, and address.'}]}\nPlease generate the response in the following format:\ngoal: goal to call this action\n\nname: api name to call\n\nargs: JSON format api args in ONLY one line\n"
-    },
-    {
-        "role": "user",
-        "content": "Call the function AirbnbSearch.search_property_by_place with the parameter as follows: 'place' is 'Berlin'."
-    }
-]
-```
-where `role` can be ['system', 'user', 'assistant'], and `content` must be in string format. Before infering it by a LLM, we need to construct it into a raw string format via `meta_template`. `meta_template` examples are provided at [meta_template.py](teval/utils/meta_template.py):
-```python
-[
-    dict(role='system', begin='<|System|>:', end='\n'),
-    dict(role='user', begin='<|User|>:', end='\n'),
-    dict(
-        role='assistant',
-        begin='<|Bot|>:',
-        end='<eoa>\n',
-        generate=True)
-]
-```
-You need to specify the `begin` and `end` token based on your tested huggingface model at [meta_template.py](teval/utils/meta_template.py) and specify the `meta_template` args in `test.py`, same as the name you set in the `meta_template.py`. As for OpenAI model, we will handle that for you.
+Setting `MODEL_MODE=dual` instructs `test.py` to spin up two backends. `test_all_en_react_dual.sh` wires the recommended environment variables:
 
+```bash
+export PROMPT_FRAMEWORK=dual_plan
+export SYSTEM_PROMPT_MODE=prepend       # planner & actor inherit this unless overridden
+export PLANNER_MODEL_PATH=/path/to/planner
+export ACTOR_MODEL_PATH=/path/to/actor
+export PLANNER_META_TEMPLATE=planner_template_name
+export ACTOR_META_TEMPLATE=actor_template_name
 
-## 📊 Benchmark Results
-
-More detailed and comprehensive benchmark results can refer to 🏆 [T-Eval official leaderboard](https://open-compass.github.io/T-Eval/leaderboard.html) !
-
-<div>
-<center>
-<img src="figs/teval_results.png">
-</div>
-
-### ✉️ Submit Your Results
-
-You can submit your inference results (via running test.py) to this [email](lovesnow@mail.ustc.edu.cn). We will run your predictions and update the results in our leaderboard. Please also provide the scale of your tested model. A sample structure of your submission should be like:
-```
-$model_display_name/
-    instruct_$model_display_name/
-        query_0_1_0.json
-        query_0_1_1.json
-        ...
-    plan_json_$model_display_name/
-    plan_str_$model_display_name/
-    ...
+sh test_all_en_react_dual.sh \
+    hf "$PLANNER_MODEL_PATH" \
+    "$PLANNER_MODEL_PATH" \
+    hf "$ACTOR_MODEL_PATH" \
+    actor-display-name \
+    planner_template_name \
+    actor_template_name
 ```
 
-## ❤️ Acknowledgements
+During inference the `DualStageLLM` (`teval/llms/dual_agent.py`) first queries the planner with `planner_messages`, stores the plan, then injects the plan into the actor prompt according to the directive supplied by the prompt framework (prepend vs append, custom role/template). The actor emits the final answer that is cached and scored.
 
-T-Eval is built with [Lagent](https://github.com/InternLM/lagent) and [OpenCompass](https://github.com/open-compass/opencompass). Thanks for their awesome work!
+### GPU Selection
 
-## 🖊️ Citation
+All runner scripts honour `CUDA_VISIBLE_DEVICES`. Pass `--gpus 0,1` to pin devices at launch:
 
-If you find this project useful in your research, please consider cite:
-```
-@article{chen2023t,
-  title={T-Eval: Evaluating the Tool Utilization Capability Step by Step},
-  author={Chen, Zehui and Du, Weihua and Zhang, Wenwei and Liu, Kuikun and Liu, Jiangning and Zheng, Miao and Zhuo, Jingming and Zhang, Songyang and Lin, Dahua and Chen, Kai and others},
-  journal={arXiv preprint arXiv:2312.14033},
-  year={2023}
-}
+```bash
+sh test_all_en.sh hf /path/to/model display-name meta_template --gpus 0,1
 ```
 
-## 💳 License
+### Cache Layout
 
-This project is released under the Apache 2.0 [license](./LICENSE).
+Outputs live under `work_dirs/<display_name>/`. File names now encode the prompt framework and model mode, e.g.:
+
+```
+work_dirs/my-model/
+  instruct_dual_plan_dual_my-model.json
+  plan_str_dual_plan_dual_my-model.json
+  ...
+```
+
+This prevents single- vs dual-mode runs (or different frameworks) from overwriting each other.
+
+## Inspecting Results
+
+After all samples finish, aggregate metrics are written to `<out_dir>/<display_name>/<display_name>_-1.json` (and `_zh` for the Chinese set). Convert to leaderboard format with:
+
+```bash
+python teval/utils/convert_results.py \
+    --result_path work_dirs/my-model/my-model_-1.json
+```
+
+## Contributing & Further Reading
+
+- Track recent development with `git log --oneline` (see the highlighted commits above for a guide to the main fork features).
+- Prompt frameworks live in `teval/prompts/`; meta templates are defined in `teval/utils/meta_template.py`.
+- Dual-agent orchestration and trace capture are handled in `teval/llms/dual_agent.py`.
+
+Pull requests are welcome—please open an issue describing the planned change before large refactors. This project inherits the original Apache 2.0 [LICENSE](./LICENSE).
