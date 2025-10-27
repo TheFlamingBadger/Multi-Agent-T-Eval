@@ -89,7 +89,11 @@ sanitize_token() {
 
 framework_token=$(sanitize_token "$prompt_framework")
 mode_token=$(sanitize_token "$model_mode")
-run_suffix="${framework_token}_${mode_token}_${display_name}"
+if [ "$framework_token" = "passthrough" ]; then
+    run_suffix="${mode_token}_${display_name}"
+else
+    run_suffix="${framework_token}_${mode_token}_${display_name}"
+fi
 
 echo "Model mode: $model_mode"
 echo "Prompt framework: $prompt_framework"
@@ -122,25 +126,25 @@ if [ "$model_mode" = "dual" ]; then
 fi
 
 echo "evaluating instruct ..."
-python test.py "${common_args[@]}" --resume --out_name "instruct_${run_suffix}.json" --out_dir "work_dirs/${display_name}/" --dataset_path data/instruct_v2.json --eval instruct --prompt_type json --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
+python test.py "${common_args[@]}" --resume --out_name "instruct_${run_suffix}.json" --out_dir "work_dirs/${run_suffix}/" --dataset_path data/instruct_v2.json --eval instruct --prompt_type json --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
 
 echo "evaluating review ..."
-python test.py "${common_args[@]}" --resume --out_name "review_str_${run_suffix}.json" --out_dir "work_dirs/${display_name}/" --dataset_path data/review_str_v2.json --eval review --prompt_type str --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
+python test.py "${common_args[@]}" --resume --out_name "review_str_${run_suffix}.json" --out_dir "work_dirs/${run_suffix}/" --dataset_path data/review_str_v2.json --eval review --prompt_type str --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
 
 echo "evaluating plan json ..."
-python test.py "${common_args[@]}" --resume --out_name "plan_json_${run_suffix}.json" --out_dir "work_dirs/${display_name}/" --dataset_path data/plan_json_v2.json --eval plan --prompt_type json --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
+python test.py "${common_args[@]}" --resume --out_name "plan_json_${run_suffix}.json" --out_dir "work_dirs/${run_suffix}/" --dataset_path data/plan_json_v2.json --eval plan --prompt_type json --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
 
 echo "evaluating plan str ..."
-python test.py "${common_args[@]}" --resume --out_name "plan_str_${run_suffix}.json" --out_dir "work_dirs/${display_name}/" --dataset_path data/plan_str_v2.json --eval plan --prompt_type str --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
+python test.py "${common_args[@]}" --resume --out_name "plan_str_${run_suffix}.json" --out_dir "work_dirs/${run_suffix}/" --dataset_path data/plan_str_v2.json --eval plan --prompt_type str --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
 
 echo "evaluating reason str ..."
-python test.py "${common_args[@]}" --resume --out_name "reason_str_${run_suffix}.json" --out_dir "work_dirs/${display_name}/" --dataset_path data/reason_str_v2.json --eval reason --prompt_type str --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
+python test.py "${common_args[@]}" --resume --out_name "reason_str_${run_suffix}.json" --out_dir "work_dirs/${run_suffix}/" --dataset_path data/reason_str_v2.json --eval reason --prompt_type str --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
 
 echo "evaluating retrieve str ..."
-python test.py "${common_args[@]}" --resume --out_name "retrieve_str_${run_suffix}.json" --out_dir "work_dirs/${display_name}/" --dataset_path data/retrieve_str_v2.json --eval retrieve --prompt_type str --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
+python test.py "${common_args[@]}" --resume --out_name "retrieve_str_${run_suffix}.json" --out_dir "work_dirs/${run_suffix}/" --dataset_path data/retrieve_str_v2.json --eval retrieve --prompt_type str --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
 
 echo "evaluating understand str ..."
-python test.py "${common_args[@]}" --resume --out_name "understand_str_${run_suffix}.json" --out_dir "work_dirs/${display_name}/" --dataset_path data/understand_str_v2.json --eval understand --prompt_type str --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
+python test.py "${common_args[@]}" --resume --out_name "understand_str_${run_suffix}.json" --out_dir "work_dirs/${run_suffix}/" --dataset_path data/understand_str_v2.json --eval understand --prompt_type str --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
 
 echo "evaluating RRU (reason, retrieve, understand) json ..."
-python test.py "${common_args[@]}" --resume --out_name "reason_retrieve_understand_json_${run_suffix}.json" --out_dir "work_dirs/${display_name}/" --dataset_path data/reason_retrieve_understand_json_v2.json --eval rru --prompt_type json --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
+python test.py "${common_args[@]}" --resume --out_name "reason_retrieve_understand_json_${run_suffix}.json" --out_dir "work_dirs/${run_suffix}/" --dataset_path data/reason_retrieve_understand_json_v2.json --eval rru --prompt_type json --model_path "$model_path" --model_display_name "$display_name" --meta_template "$meta_template"
