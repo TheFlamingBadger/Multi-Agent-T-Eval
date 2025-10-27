@@ -3,8 +3,8 @@ import logging
 from typing import Dict, List, Optional, Union
 
 from lagent.schema import ModelStatusCode
-from .base_api import APITemplateParser
-from .base_llm import BaseLLM
+from ..lagent.lagent.llms.base_api import APITemplateParser
+from ..lagent.lagent.llms.base_llm import BaseLLM
 
 logger = logging.getLogger(__name__)
 
@@ -175,9 +175,18 @@ class HFTransformer(BaseLLM):
             inputs = self.tokenizer(
                 inputs, padding=True, return_tensors="pt", return_length=True
             )
-            input_length = inputs["length"]
-            for k, v in inputs.items():
-                inputs[k] = v.cuda()
+            input_length = inputs["length"].tolist()
+            # Align tokenized tensors with the model's primary device instead of
+            # assuming cuda:0 so CUDA_VISIBLE_DEVICES or device_map settings work.
+            device = getattr(self.model, "device", None)
+            if device is None:
+                try:
+                    device = next(self.model.parameters()).device
+                except StopIteration:
+                    device = torch.device(
+                        "cuda" if torch.cuda.is_available() else "cpu"
+                    )
+            inputs = inputs.to(device)
             input_ids = inputs["input_ids"]
             attention_mask = inputs["attention_mask"]
             batch_size = input_ids.shape[0]
