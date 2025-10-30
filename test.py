@@ -1,5 +1,11 @@
 import teval.evaluators as evaluator_factory
 from teval.utils.meta_template import meta_template_dict
+from teval.orchestrators import (
+    DirectOrchestrator, 
+    ThinkingTokensOrchestrator, 
+    MultiModelOrchestrator,
+    AzureOpenAIOrchestrator
+)
 from lagent.llms.huggingface import HFTransformerCasualLM, HFTransformerChat
 from lagent.llms.openai import GPTAPI
 import argparse
@@ -12,7 +18,7 @@ import random
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_path', type=str, default='data/instruct_v1.json')
-    parser.add_argument('--model_type', type=str, choices=['api', 'hf'], default='hf')
+    parser.add_argument('--model_type', type=str, choices=['api', 'hf', 'azure'], default='hf')
     # hf means huggingface, if you want to use huggingface model, you should specify the path of the model
     parser.add_argument('--model_display_name', type=str, default="")
     # if not set, it will be the same as the model type, only inference the output_name of the result
@@ -26,6 +32,18 @@ def parse_args():
     parser.add_argument('--prompt_type', type=str, default='json', choices=['json', 'str'])
     parser.add_argument('--meta_template', type=str, default='qwen')
     parser.add_argument('--batch_size', type=int, default=1)
+    # Orchestrator arguments
+    parser.add_argument('--orchestrator', type=str, default='direct', 
+                       choices=['direct', 'thinking', 'multi_model'],
+                       help='Orchestration strategy: direct (baseline), thinking (chain-of-thought), or multi_model')
+    parser.add_argument('--thinking_prompt', type=str, 
+                       default="First, let's think step by step about how to approach this.",
+                       help='Prompt for thinking phase (used with --orchestrator thinking)')
+    parser.add_argument('--thinking_max_tokens', type=int, default=512,
+                       help='Max tokens for thinking phase (used with --orchestrator thinking)')
+    # Azure OpenAI arguments
+    parser.add_argument('--azure_env_path', type=str, default='.env',
+                       help='Path to .env file with Azure OpenAI credentials (used with --model_type azure)')
     args = parser.parse_args()
     return args
 
@@ -62,7 +80,7 @@ def split_special_tokens(text):
     text = text.strip('`').strip()
     return text
 
-def infer(dataset, llm, out_dir, tmp_folder_name='tmp', test_num = 1, batch_size=1):
+def infer(dataset, orchestrator, out_dir, tmp_folder_name='tmp', test_num = 1, batch_size=1):
     random_list = list(dataset.keys())[:test_num]
     batch_infer_list = []; batch_infer_ids = []
     for idx in tqdm(random_list):
@@ -71,10 +89,10 @@ def infer(dataset, llm, out_dir, tmp_folder_name='tmp', test_num = 1, batch_size
         batch_infer_ids.append(idx)
         # batch inference
         if len(batch_infer_ids) == batch_size or idx == len(random_list) - 1:
-            predictions = llm.chat(batch_infer_list, do_sample=False)
+            predictions = orchestrator.completion(batch_infer_list, do_sample=False)
             for ptr, prediction in enumerate(predictions):
                 if not isinstance(prediction, str):
-                    print("Warning: the output of llm is not a string, force to convert it into str")
+                    print("Warning: the output of orchestrator is not a string, force to convert it into str")
                     prediction = str(prediction)
                 prediction = split_special_tokens(prediction)
                 data_ptr = batch_infer_ids[ptr]
@@ -102,19 +120,61 @@ if __name__ == '__main__':
         test_num = max(min(args.test_num - tested_num, total_num - tested_num), 0)
     output_file_path = os.path.join(args.out_dir, args.out_name)
     if test_num != 0:
-        if args.model_type == 'api':
-            # if you want to use GPT, please refer to lagent for how to pass your key to GPTAPI class
-            llm = GPTAPI(args.model_path)
-        # elif args.model_type.startswith('claude'):
-        #     llm = ClaudeAPI(args.model_type)
-        elif args.model_type == 'hf':
-            meta_template = meta_template_dict.get(args.meta_template)
-            if "chatglm" in args.model_display_name:
-                llm = HFTransformerChat(path=args.model_path, meta_template=meta_template)
-            else:
-                llm = HFTransformerCasualLM(path=args.model_path, meta_template=meta_template, max_new_tokens=512)
+        # Initialize orchestrator based on model type
+        if args.model_type == 'azure':
+            # Azure OpenAI doesn't need separate LLM initialization
+            # The orchestrator handles everything
+            if args.orchestrator == 'direct':
+                orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
+            elif args.orchestrator == 'thinking':
+                # Create base Azure client first
+                base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
+                # Wrap with thinking orchestrator (using the Azure orchestrator as the "llm")
+                orchestrator = ThinkingTokensOrchestrator(
+                    base_orchestrator,
+                    thinking_prompt=args.thinking_prompt,
+                    thinking_max_tokens=args.thinking_max_tokens
+                )
+            elif args.orchestrator == 'multi_model':
+                base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
+                orchestrator = MultiModelOrchestrator(
+                    base_orchestrator,
+                    strategy='sequential'
+                )
+        else:
+            # Initialize LLM for non-Azure model types
+            if args.model_type == 'api':
+                # if you want to use GPT, please refer to lagent for how to pass your key to GPTAPI class
+                llm = GPTAPI(args.model_path)
+            # elif args.model_type.startswith('claude'):
+            #     llm = ClaudeAPI(args.model_type)
+            elif args.model_type == 'hf':
+                meta_template = meta_template_dict.get(args.meta_template)
+                if "chatglm" in args.model_display_name:
+                    llm = HFTransformerChat(path=args.model_path, meta_template=meta_template)
+                else:
+                    llm = HFTransformerCasualLM(path=args.model_path, meta_template=meta_template, max_new_tokens=512)
+            
+            # Initialize orchestrator
+            if args.orchestrator == 'direct':
+                orchestrator = DirectOrchestrator(llm)
+            elif args.orchestrator == 'thinking':
+                orchestrator = ThinkingTokensOrchestrator(
+                    llm,
+                    thinking_prompt=args.thinking_prompt,
+                    thinking_max_tokens=args.thinking_max_tokens
+                )
+            elif args.orchestrator == 'multi_model':
+                # For multi_model, use same model but with sequential strategy as default
+                # Users can extend this by modifying the code to pass secondary models
+                orchestrator = MultiModelOrchestrator(
+                    llm,
+                    strategy='sequential'
+                )
+        
+        print(f"Using {args.orchestrator} orchestrator")
         print(f"Tested {tested_num} samples, left {test_num} samples, total {total_num} samples")
-        prediction = infer(dataset, llm, args.out_dir, tmp_folder_name=tmp_folder_name, test_num=test_num, batch_size=args.batch_size)
+        prediction = infer(dataset, orchestrator, args.out_dir, tmp_folder_name=tmp_folder_name, test_num=test_num, batch_size=args.batch_size)
         # dump prediction to out_dir
         mmengine.dump(prediction, os.path.join(args.out_dir, args.out_name))
 
