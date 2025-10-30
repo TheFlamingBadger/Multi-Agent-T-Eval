@@ -25,6 +25,7 @@ class BaseOrchestrator(ABC):
         """
         self.llm = llm
         self.config = kwargs
+        self._last_trace: List[Dict[str, Any]] = []
     
     @abstractmethod
     def completion(
@@ -92,3 +93,22 @@ class BaseOrchestrator(ABC):
             The outputs list unchanged (lagent always returns lists)
         """
         return outputs
+
+    @property
+    def last_trace(self) -> List[Dict[str, Any]]:
+        """
+        Retrieve the trace data recorded during the most recent completion call.
+        
+        Returns:
+            List of trace dictionaries aligned with the batch order supplied to `completion`.
+        """
+        return self._last_trace
+
+    def _record_trace(self, traces: List[Dict[str, Any]]) -> None:
+        """
+        Store trace information for retrieval after completion.
+        
+        Args:
+            traces: List of trace entries corresponding to the generated outputs.
+        """
+        self._last_trace = traces

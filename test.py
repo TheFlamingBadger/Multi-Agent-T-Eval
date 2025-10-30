@@ -90,6 +90,7 @@ def infer(dataset, orchestrator, out_dir, tmp_folder_name='tmp', test_num = 1, b
         # batch inference
         if len(batch_infer_ids) == batch_size or idx == len(random_list) - 1:
             predictions = orchestrator.completion(batch_infer_list, do_sample=False)
+            trace_batch = getattr(orchestrator, "last_trace", []) or []
             for ptr, prediction in enumerate(predictions):
                 if not isinstance(prediction, str):
                     print("Warning: the output of orchestrator is not a string, force to convert it into str")
@@ -97,6 +98,8 @@ def infer(dataset, orchestrator, out_dir, tmp_folder_name='tmp', test_num = 1, b
                 prediction = split_special_tokens(prediction)
                 data_ptr = batch_infer_ids[ptr]
                 dataset[data_ptr]['prediction'] = prediction
+                if ptr < len(trace_batch) and trace_batch[ptr]:
+                    dataset[data_ptr]['orchestration_trace'] = trace_batch[ptr]
                 mmengine.dump(dataset[data_ptr], os.path.join(out_dir, tmp_folder_name, f'{data_ptr}.json'))
             batch_infer_ids = []; batch_infer_list = []
         

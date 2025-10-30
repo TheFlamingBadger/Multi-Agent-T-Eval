@@ -76,6 +76,7 @@ class ThinkingTokensOrchestrator(BaseOrchestrator):
         )
         
         thinking_responses = self.llm.chat(thinking_histories, **thinking_kwargs)
+        underlying_thinking_traces = getattr(self.llm, "last_trace", []) or []
         
         # Phase 2: Generate final responses using thinking as context
         final_histories = self._prepare_final_prompts(
@@ -84,7 +85,47 @@ class ThinkingTokensOrchestrator(BaseOrchestrator):
         )
         
         final_responses = self.llm.chat(final_histories, **kwargs)
-        
+        underlying_final_traces = getattr(self.llm, "last_trace", []) or []
+
+        traces = []
+        for index, (original_history, thinking_history, final_history, thinking, final) in enumerate(zip(
+            histories,
+            thinking_histories,
+            final_histories,
+            thinking_responses,
+            final_responses
+        )):
+            thinking_call_trace = underlying_thinking_traces[index] if index < len(underlying_thinking_traces) else None
+            final_call_trace = underlying_final_traces[index] if index < len(underlying_final_traces) else None
+            traces.append({
+                "strategy": "thinking",
+                "config": {
+                    "thinking_prompt": self.thinking_prompt,
+                    "thinking_max_tokens": self.thinking_max_tokens,
+                    "include_thinking_in_context": self.include_thinking_in_context,
+                    "separator": self.separator,
+                },
+                "steps": [
+                    {
+                        "phase": "thinking",
+                        "messages": thinking_history,
+                        "response": thinking,
+                    },
+                    {
+                        "phase": "final",
+                        "messages": final_history,
+                        "response": final,
+                    },
+                ],
+                "original_messages": original_history,
+                "underlying_calls": {
+                    "thinking": thinking_call_trace,
+                    "final": final_call_trace,
+                },
+            })
+
+        self._record_trace(traces)
+
         return self._denormalize_output(final_responses, was_single)
     
     def _prepare_thinking_prompts(

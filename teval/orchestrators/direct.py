@@ -34,4 +34,25 @@ class DirectOrchestrator(BaseOrchestrator):
         Returns:
             List[str]: Generated responses from the LLM
         """
-        return self.llm.chat(message_histories, **kwargs)
+        histories, was_single = self._normalize_input(message_histories)
+        responses = self.llm.chat(histories, **kwargs)
+
+        model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "path", None) or self.llm.__class__.__name__
+        traces = []
+
+        for history, response in zip(histories, responses):
+            traces.append({
+                "strategy": "direct",
+                "model": model_name,
+                "steps": [
+                    {
+                        "type": "llm_call",
+                        "messages": history,
+                        "response": response,
+                    }
+                ]
+            })
+
+        self._record_trace(traces)
+
+        return self._denormalize_output(responses, was_single)

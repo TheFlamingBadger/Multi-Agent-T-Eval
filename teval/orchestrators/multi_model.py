@@ -101,6 +101,12 @@ class MultiModelOrchestrator(BaseOrchestrator):
             return self._sequential_completion(message_histories, **kwargs)
         elif self.strategy == 'ensemble':
             return self._ensemble_completion(message_histories, **kwargs)
+
+    def _model_identifier(self, model) -> str:
+        """
+        Attempt to extract a human-readable identifier for the given model object.
+        """
+        return getattr(model, "model_name", None) or getattr(model, "path", None) or model.__class__.__name__
     
     def _routing_completion(
         self,
@@ -118,13 +124,27 @@ class MultiModelOrchestrator(BaseOrchestrator):
             Responses from routed models
         """
         histories, was_single = self._normalize_input(message_histories)
+        traces = [
+            {
+                "strategy": "multi_model",
+                "mode": "routing",
+                "steps": []
+            }
+            for _ in histories
+        ]
         
         if self.routing_fn is None:
-            # No routing function, use primary model for all
-            return self._denormalize_output(
-                self.llm.chat(histories, **kwargs),
-                was_single
-            )
+            responses = self.llm.chat(histories, **kwargs)
+            model_name = self._model_identifier(self.llm)
+            for idx, (history, response) in enumerate(zip(histories, responses)):
+                traces[idx]["steps"].append({
+                    "type": "llm_call",
+                    "selected_model": model_name,
+                    "messages": history,
+                    "response": response,
+                })
+            self._record_trace(traces)
+            return self._denormalize_output(responses, was_single)
         
         # Group histories by routed model
         model_groups = {}  # model_name -> list of (index, history)
@@ -142,19 +162,34 @@ class MultiModelOrchestrator(BaseOrchestrator):
             # Get the appropriate model
             if model_name == 'primary' or model_name not in self.secondary_llms:
                 model = self.llm
+                resolved_name = self._model_identifier(self.llm)
             else:
                 model = self.secondary_llms[model_name]
+                resolved_name = self._model_identifier(model)
             
             # Extract just the histories for this batch
             indices, batch_histories = zip(*group)
             
             # Generate
-            batch_responses = model.chat(list(batch_histories), **kwargs)
+            batch_histories_list = list(batch_histories)
+            batch_responses = model.chat(batch_histories_list, **kwargs)
+            model_trace = getattr(model, "last_trace", []) or []
             
-            # Place responses in correct positions
-            for idx, response in zip(indices, batch_responses):
+            # Place responses in correct positions and record trace
+            for local_pos, (idx, history, response) in enumerate(zip(indices, batch_histories_list, batch_responses)):
                 responses[idx] = response
+                step_payload = {
+                    "type": "llm_call",
+                    "selected_model": model_name,
+                    "resolved_model": resolved_name,
+                    "messages": history,
+                    "response": response,
+                }
+                if local_pos < len(model_trace) and model_trace[local_pos]:
+                    step_payload["underlying_trace"] = model_trace[local_pos]
+                traces[idx]["steps"].append(step_payload)
         
+        self._record_trace(traces)
         return self._denormalize_output(responses, was_single)
     
     def _sequential_completion(
@@ -173,16 +208,27 @@ class MultiModelOrchestrator(BaseOrchestrator):
             Final responses from secondary model
         """
         histories, was_single = self._normalize_input(message_histories)
+        traces = [
+            {
+                "strategy": "multi_model",
+                "mode": "sequential",
+                "steps": []
+            }
+            for _ in histories
+        ]
         
         # Phase 1: Get reasoning from primary model
         reasoning_responses = self.llm.chat(histories, **kwargs)
+        reasoning_trace = getattr(self.llm, "last_trace", []) or []
+        primary_model_name = self._model_identifier(self.llm)
         
         # Phase 2: Use reasoning with secondary model for final response
         # If no secondary model specified, use primary for both phases
         final_model = self.secondary_llms.get('final', self.llm)
+        final_model_name = self._model_identifier(final_model)
         
         final_histories = []
-        for history, reasoning in zip(histories, reasoning_responses):
+        for idx, (history, reasoning) in enumerate(zip(histories, reasoning_responses)):
             final_history = copy.deepcopy(history)
             final_history.append({
                 "role": "assistant",
@@ -193,9 +239,33 @@ class MultiModelOrchestrator(BaseOrchestrator):
                 "content": "Based on the reasoning above, provide your final response."
             })
             final_histories.append(final_history)
+            reasoning_step = {
+                "phase": "reasoning",
+                "type": "llm_call",
+                "model": primary_model_name,
+                "messages": history,
+                "response": reasoning,
+            }
+            if idx < len(reasoning_trace) and reasoning_trace[idx]:
+                reasoning_step["underlying_trace"] = reasoning_trace[idx]
+            traces[idx]["steps"].append(reasoning_step)
         
         final_responses = final_model.chat(final_histories, **kwargs)
+        final_trace = getattr(final_model, "last_trace", []) or []
         
+        for idx, (final_history, final_response) in enumerate(zip(final_histories, final_responses)):
+            final_step = {
+                "phase": "final",
+                "type": "llm_call",
+                "model": final_model_name,
+                "messages": final_history,
+                "response": final_response,
+            }
+            if idx < len(final_trace) and final_trace[idx]:
+                final_step["underlying_trace"] = final_trace[idx]
+            traces[idx]["steps"].append(final_step)
+        
+        self._record_trace(traces)
         return self._denormalize_output(final_responses, was_single)
     
     def _ensemble_completion(
@@ -214,35 +284,71 @@ class MultiModelOrchestrator(BaseOrchestrator):
             Selected responses based on ensemble_selection strategy
         """
         histories, was_single = self._normalize_input(message_histories)
+        traces = [
+            {
+                "strategy": "multi_model",
+                "mode": "ensemble",
+                "selection": self.ensemble_selection,
+                "steps": [],
+                "candidates": []
+            }
+            for _ in histories
+        ]
         
-        # Generate from all models
+        # Generate from all models in a deterministic order
+        model_sequence = [('primary', self.llm)] + list(self.secondary_llms.items())
         all_model_responses = []
         
-        # Generate from primary model
-        all_model_responses.append(self.llm.chat(histories, **kwargs))
-        
-        # Generate from secondary models
-        for model_name, model in self.secondary_llms.items():
-            all_model_responses.append(model.chat(histories, **kwargs))
+        for alias, model in model_sequence:
+            model_outputs = model.chat(histories, **kwargs)
+            model_trace = getattr(model, "last_trace", []) or []
+            model_name = self._model_identifier(model)
+            all_model_responses.append((alias, model_name, model_outputs))
+            
+            for idx, (history, output) in enumerate(zip(histories, model_outputs)):
+                candidate_entry = {
+                    "model_alias": alias,
+                    "model": model_name,
+                    "messages": history,
+                    "response": output,
+                }
+                if idx < len(model_trace) and model_trace[idx]:
+                    candidate_entry["underlying_trace"] = model_trace[idx]
+                traces[idx]["candidates"].append(candidate_entry)
         
         # Select best response for each input based on strategy
         final_responses = []
         
         for response_idx in range(len(histories)):
-            # Get all responses for this input
-            candidate_responses = [
-                model_responses[response_idx] 
-                for model_responses in all_model_responses
+            # Get all responses for this input alongside provenance
+            candidate_bundle = [
+                {
+                    "alias": alias,
+                    "model": model_name,
+                    "response": outputs[response_idx]
+                }
+                for alias, model_name, outputs in all_model_responses
             ]
+            candidate_responses = [candidate["response"] for candidate in candidate_bundle]
             
             # Select based on strategy
             if self.ensemble_selection == 'first':
-                selected = candidate_responses[0]
+                selected_idx = 0
             elif self.ensemble_selection == 'longest':
-                selected = max(candidate_responses, key=len)
+                selected_idx = max(range(len(candidate_responses)), key=lambda i: len(candidate_responses[i]))
             elif self.ensemble_selection == 'shortest':
-                selected = min(candidate_responses, key=len)
-            
+                selected_idx = min(range(len(candidate_responses)), key=lambda i: len(candidate_responses[i]))
+            selected = candidate_responses[selected_idx]
             final_responses.append(selected)
+            
+            selected_candidate = candidate_bundle[selected_idx]
+            traces[response_idx]["steps"].append({
+                "type": "selection",
+                "selected_alias": selected_candidate["alias"],
+                "selected_model": selected_candidate["model"],
+                "selection_strategy": self.ensemble_selection,
+            })
+            traces[response_idx]["final_response"] = selected
         
+        self._record_trace(traces)
         return self._denormalize_output(final_responses, was_single)

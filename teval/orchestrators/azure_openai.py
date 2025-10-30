@@ -134,6 +134,7 @@ class AzureOpenAIOrchestrator(BaseOrchestrator):
         
         # Generate responses for each history
         responses = []
+        traces = []
         for history in histories:
             try:
                 response = self.client.chat.completions.create(
@@ -144,11 +145,44 @@ class AzureOpenAIOrchestrator(BaseOrchestrator):
                 # Extract the message content
                 content = response.choices[0].message.content
                 responses.append(content)
+                usage = getattr(response, "usage", None)
+                usage_dict = None
+                if usage is not None:
+                    usage_dict = {
+                        "prompt_tokens": getattr(usage, "prompt_tokens", None),
+                        "completion_tokens": getattr(usage, "completion_tokens", None),
+                        "total_tokens": getattr(usage, "total_tokens", None),
+                    }
+                traces.append({
+                    "strategy": "azure_direct",
+                    "deployment": self.deployment,
+                    "steps": [
+                        {
+                            "type": "api_call",
+                            "messages": history,
+                            "response": content,
+                            "usage": usage_dict,
+                        }
+                    ],
+                    "usage": usage_dict,
+                })
             except Exception as e:
                 print(f"Error calling Azure OpenAI API: {e}")
                 # Return empty string on error to maintain batch consistency
                 responses.append("")
-        
+                traces.append({
+                    "strategy": "azure_direct",
+                    "deployment": self.deployment,
+                    "steps": [
+                        {
+                            "type": "api_call",
+                            "messages": history,
+                            "error": str(e),
+                        }
+                    ],
+                    "usage": None,
+                })
+        self._record_trace(traces)
         return self._denormalize_output(responses, was_single)
     
     def _prepare_api_params(self, kwargs: dict) -> dict:
@@ -199,3 +233,11 @@ class AzureOpenAIOrchestrator(BaseOrchestrator):
             f"endpoint={self.endpoint}, "
             f"api_version={self.api_version})"
         )
+
+    # Compatibility shim so this orchestrator can be treated like an LLM in higher-level orchestrators.
+    def chat(
+        self,
+        message_histories: Union[List[List[Dict[str, str]]], List[Dict[str, str]]],
+        **kwargs
+    ) -> List[str]:
+        return self.completion(message_histories, **kwargs)
