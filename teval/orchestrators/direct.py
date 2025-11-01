@@ -1,4 +1,5 @@
 from typing import List, Dict, Union
+from time import perf_counter
 from .base import BaseOrchestrator
 
 
@@ -35,7 +36,9 @@ class DirectOrchestrator(BaseOrchestrator):
             List[str]: Generated responses from the LLM
         """
         histories, was_single = self._normalize_input(message_histories)
+        start_time = perf_counter()
         responses = self.llm.chat(histories, **kwargs)
+        elapsed = perf_counter() - start_time
 
         model_name = getattr(self.llm, "model_name", None) or getattr(self.llm, "path", None) or self.llm.__class__.__name__
         traces = []
@@ -44,11 +47,13 @@ class DirectOrchestrator(BaseOrchestrator):
             traces.append({
                 "strategy": "direct",
                 "model": model_name,
+                "total_elapsed_seconds": elapsed,
                 "steps": [
                     {
                         "type": "llm_call",
                         "messages": history,
                         "response": response,
+                        "elapsed_seconds": elapsed,
                     }
                 ]
             })

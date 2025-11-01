@@ -1,4 +1,5 @@
 from typing import List, Dict, Union, Optional
+from time import perf_counter
 from .base import BaseOrchestrator
 import os
 from dotenv import load_dotenv
@@ -137,11 +138,13 @@ class AzureOpenAIOrchestrator(BaseOrchestrator):
         traces = []
         for history in histories:
             try:
+                call_start = perf_counter()
                 response = self.client.chat.completions.create(
                     model=self.deployment,
                     messages=history,
                     **api_params
                 )
+                call_elapsed = perf_counter() - call_start
                 # Extract the message content
                 content = response.choices[0].message.content
                 responses.append(content)
@@ -156,28 +159,33 @@ class AzureOpenAIOrchestrator(BaseOrchestrator):
                 traces.append({
                     "strategy": "azure_direct",
                     "deployment": self.deployment,
+                    "total_elapsed_seconds": call_elapsed,
                     "steps": [
                         {
                             "type": "api_call",
                             "messages": history,
                             "response": content,
                             "usage": usage_dict,
+                            "elapsed_seconds": call_elapsed,
                         }
                     ],
                     "usage": usage_dict,
                 })
             except Exception as e:
+                call_elapsed = perf_counter() - call_start if 'call_start' in locals() else 0.0
                 print(f"Error calling Azure OpenAI API: {e}")
                 # Return empty string on error to maintain batch consistency
                 responses.append("")
                 traces.append({
                     "strategy": "azure_direct",
                     "deployment": self.deployment,
+                    "total_elapsed_seconds": call_elapsed,
                     "steps": [
                         {
                             "type": "api_call",
                             "messages": history,
                             "error": str(e),
+                            "elapsed_seconds": call_elapsed,
                         }
                     ],
                     "usage": None,

@@ -1,4 +1,5 @@
 from typing import List, Dict, Union, Callable, Optional
+from time import perf_counter
 from .base import BaseOrchestrator
 import copy
 
@@ -132,9 +133,12 @@ class MultiModelOrchestrator(BaseOrchestrator):
             }
             for _ in histories
         ]
-        
+        total_elapsed = [0.0] * len(histories)
+
         if self.routing_fn is None:
+            call_start = perf_counter()
             responses = self.llm.chat(histories, **kwargs)
+            call_elapsed = perf_counter() - call_start
             model_name = self._model_identifier(self.llm)
             for idx, (history, response) in enumerate(zip(histories, responses)):
                 traces[idx]["steps"].append({
@@ -142,7 +146,10 @@ class MultiModelOrchestrator(BaseOrchestrator):
                     "selected_model": model_name,
                     "messages": history,
                     "response": response,
+                    "elapsed_seconds": call_elapsed,
                 })
+                total_elapsed[idx] += call_elapsed
+                traces[idx]["total_elapsed_seconds"] = total_elapsed[idx]
             self._record_trace(traces)
             return self._denormalize_output(responses, was_single)
         
@@ -172,7 +179,9 @@ class MultiModelOrchestrator(BaseOrchestrator):
             
             # Generate
             batch_histories_list = list(batch_histories)
+            call_start = perf_counter()
             batch_responses = model.chat(batch_histories_list, **kwargs)
+            call_elapsed = perf_counter() - call_start
             model_trace = getattr(model, "last_trace", []) or []
             
             # Place responses in correct positions and record trace
@@ -184,11 +193,16 @@ class MultiModelOrchestrator(BaseOrchestrator):
                     "resolved_model": resolved_name,
                     "messages": history,
                     "response": response,
+                    "elapsed_seconds": call_elapsed,
                 }
                 if local_pos < len(model_trace) and model_trace[local_pos]:
                     step_payload["underlying_trace"] = model_trace[local_pos]
                 traces[idx]["steps"].append(step_payload)
-        
+                total_elapsed[idx] += call_elapsed
+
+        for idx in range(len(traces)):
+            traces[idx]["total_elapsed_seconds"] = total_elapsed[idx]
+
         self._record_trace(traces)
         return self._denormalize_output(responses, was_single)
     
@@ -216,12 +230,15 @@ class MultiModelOrchestrator(BaseOrchestrator):
             }
             for _ in histories
         ]
-        
+        total_elapsed = [0.0] * len(histories)
+
         # Phase 1: Get reasoning from primary model
+        reasoning_start = perf_counter()
         reasoning_responses = self.llm.chat(histories, **kwargs)
+        reasoning_elapsed = perf_counter() - reasoning_start
         reasoning_trace = getattr(self.llm, "last_trace", []) or []
         primary_model_name = self._model_identifier(self.llm)
-        
+
         # Phase 2: Use reasoning with secondary model for final response
         # If no secondary model specified, use primary for both phases
         final_model = self.secondary_llms.get('final', self.llm)
@@ -245,14 +262,18 @@ class MultiModelOrchestrator(BaseOrchestrator):
                 "model": primary_model_name,
                 "messages": history,
                 "response": reasoning,
+                "elapsed_seconds": reasoning_elapsed,
             }
             if idx < len(reasoning_trace) and reasoning_trace[idx]:
                 reasoning_step["underlying_trace"] = reasoning_trace[idx]
             traces[idx]["steps"].append(reasoning_step)
-        
+            total_elapsed[idx] += reasoning_elapsed
+
+        final_start = perf_counter()
         final_responses = final_model.chat(final_histories, **kwargs)
+        final_elapsed = perf_counter() - final_start
         final_trace = getattr(final_model, "last_trace", []) or []
-        
+
         for idx, (final_history, final_response) in enumerate(zip(final_histories, final_responses)):
             final_step = {
                 "phase": "final",
@@ -260,11 +281,16 @@ class MultiModelOrchestrator(BaseOrchestrator):
                 "model": final_model_name,
                 "messages": final_history,
                 "response": final_response,
+                "elapsed_seconds": final_elapsed,
             }
             if idx < len(final_trace) and final_trace[idx]:
                 final_step["underlying_trace"] = final_trace[idx]
             traces[idx]["steps"].append(final_step)
-        
+            total_elapsed[idx] += final_elapsed
+
+        for idx in range(len(traces)):
+            traces[idx]["total_elapsed_seconds"] = total_elapsed[idx]
+
         self._record_trace(traces)
         return self._denormalize_output(final_responses, was_single)
     
@@ -294,13 +320,16 @@ class MultiModelOrchestrator(BaseOrchestrator):
             }
             for _ in histories
         ]
+        total_elapsed = [0.0] * len(histories)
         
         # Generate from all models in a deterministic order
         model_sequence = [('primary', self.llm)] + list(self.secondary_llms.items())
         all_model_responses = []
         
         for alias, model in model_sequence:
+            call_start = perf_counter()
             model_outputs = model.chat(histories, **kwargs)
+            call_elapsed = perf_counter() - call_start
             model_trace = getattr(model, "last_trace", []) or []
             model_name = self._model_identifier(model)
             all_model_responses.append((alias, model_name, model_outputs))
@@ -311,10 +340,12 @@ class MultiModelOrchestrator(BaseOrchestrator):
                     "model": model_name,
                     "messages": history,
                     "response": output,
+                    "elapsed_seconds": call_elapsed,
                 }
                 if idx < len(model_trace) and model_trace[idx]:
                     candidate_entry["underlying_trace"] = model_trace[idx]
                 traces[idx]["candidates"].append(candidate_entry)
+                total_elapsed[idx] += call_elapsed
         
         # Select best response for each input based on strategy
         final_responses = []
@@ -349,6 +380,9 @@ class MultiModelOrchestrator(BaseOrchestrator):
                 "selection_strategy": self.ensemble_selection,
             })
             traces[response_idx]["final_response"] = selected
-        
+
+        for idx in range(len(traces)):
+            traces[idx]["total_elapsed_seconds"] = total_elapsed[idx]
+
         self._record_trace(traces)
         return self._denormalize_output(final_responses, was_single)

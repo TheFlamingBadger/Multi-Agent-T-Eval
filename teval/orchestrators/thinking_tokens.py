@@ -1,4 +1,5 @@
 from typing import List, Dict, Union
+from time import perf_counter
 from .base import BaseOrchestrator
 import copy
 
@@ -75,7 +76,9 @@ class ThinkingTokensOrchestrator(BaseOrchestrator):
             self.thinking_max_tokens
         )
         
+        thinking_start = perf_counter()
         thinking_responses = self.llm.chat(thinking_histories, **thinking_kwargs)
+        thinking_elapsed = perf_counter() - thinking_start
         underlying_thinking_traces = getattr(self.llm, "last_trace", []) or []
         
         # Phase 2: Generate final responses using thinking as context
@@ -84,8 +87,11 @@ class ThinkingTokensOrchestrator(BaseOrchestrator):
             thinking_responses
         )
         
+        final_start = perf_counter()
         final_responses = self.llm.chat(final_histories, **kwargs)
+        final_elapsed = perf_counter() - final_start
         underlying_final_traces = getattr(self.llm, "last_trace", []) or []
+        total_elapsed = thinking_elapsed + final_elapsed
 
         traces = []
         for index, (original_history, thinking_history, final_history, thinking, final) in enumerate(zip(
@@ -110,11 +116,13 @@ class ThinkingTokensOrchestrator(BaseOrchestrator):
                         "phase": "thinking",
                         "messages": thinking_history,
                         "response": thinking,
+                        "elapsed_seconds": thinking_elapsed,
                     },
                     {
                         "phase": "final",
                         "messages": final_history,
                         "response": final,
+                        "elapsed_seconds": final_elapsed,
                     },
                 ],
                 "original_messages": original_history,
@@ -122,6 +130,7 @@ class ThinkingTokensOrchestrator(BaseOrchestrator):
                     "thinking": thinking_call_trace,
                     "final": final_call_trace,
                 },
+                "total_elapsed_seconds": total_elapsed,
             })
 
         self._record_trace(traces)

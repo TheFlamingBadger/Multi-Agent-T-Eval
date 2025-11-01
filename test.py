@@ -14,6 +14,7 @@ import os
 from tqdm import tqdm
 import shutil
 import random
+from time import perf_counter
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -89,8 +90,11 @@ def infer(dataset, orchestrator, out_dir, tmp_folder_name='tmp', test_num = 1, b
         batch_infer_ids.append(idx)
         # batch inference
         if len(batch_infer_ids) == batch_size or idx == len(random_list) - 1:
+            batch_start = perf_counter()
             predictions = orchestrator.completion(batch_infer_list, do_sample=False)
+            batch_elapsed = perf_counter() - batch_start
             trace_batch = getattr(orchestrator, "last_trace", []) or []
+            per_item_elapsed = batch_elapsed / max(len(batch_infer_ids), 1)
             for ptr, prediction in enumerate(predictions):
                 if not isinstance(prediction, str):
                     print("Warning: the output of orchestrator is not a string, force to convert it into str")
@@ -100,6 +104,7 @@ def infer(dataset, orchestrator, out_dir, tmp_folder_name='tmp', test_num = 1, b
                 dataset[data_ptr]['prediction'] = prediction
                 if ptr < len(trace_batch) and trace_batch[ptr]:
                     dataset[data_ptr]['orchestration_trace'] = trace_batch[ptr]
+                dataset[data_ptr]['inference_time_seconds'] = batch_elapsed if len(batch_infer_ids) == 1 else per_item_elapsed
                 mmengine.dump(dataset[data_ptr], os.path.join(out_dir, tmp_folder_name, f'{data_ptr}.json'))
             batch_infer_ids = []; batch_infer_list = []
         
