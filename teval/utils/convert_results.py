@@ -1,5 +1,6 @@
 import argparse
 import os
+from glob import glob
 from typing import Dict, List, Optional
 
 import mmengine
@@ -170,6 +171,22 @@ def build_category_file_map(model_name: str) -> Dict[str, List[str]]:
     }
 
 
+def resolve_category_files(base_dir: str, filename: str) -> List[str]:
+    """Return actual files matching the expected category filename.
+
+    Falls back to globbing suffix variants (e.g., *_direct.json) so the script
+    can work with example_data layouts that carry additional suffixes.
+    """
+    exact_path = os.path.join(base_dir, filename)
+    if os.path.exists(exact_path):
+        return [exact_path]
+
+    stem, ext = os.path.splitext(filename)
+    pattern = os.path.join(base_dir, f"{stem}_*{ext}")
+    matches = sorted(glob(pattern))
+    return matches
+
+
 def format_value(value, decimals=2):
     return f"{value:.{decimals}f}" if isinstance(value, (int, float)) else "N/A"
 
@@ -197,12 +214,12 @@ def convert_results(result_path: str):
     for category, filenames in category_files.items():
         stats_to_combine: List[Dict[str, object]] = []
         for filename in filenames:
-            file_path = os.path.join(base_dir, filename)
-            if file_path not in file_stats_cache:
-                file_stats_cache[file_path] = compute_file_stats(file_path)
-            file_stats = file_stats_cache[file_path]
-            if file_stats:
-                stats_to_combine.append(file_stats)
+            for file_path in resolve_category_files(base_dir, filename):
+                if file_path not in file_stats_cache:
+                    file_stats_cache[file_path] = compute_file_stats(file_path)
+                file_stats = file_stats_cache[file_path]
+                if file_stats:
+                    stats_to_combine.append(file_stats)
         if stats_to_combine:
             category_stats[category] = combine_category_stats(stats_to_combine)
         else:
@@ -218,7 +235,7 @@ def convert_results(result_path: str):
         ("Category", 12),
         ("Avg Time (s)", 14),
         ("Avg Prompt Tokens", 18),
-        ("Avg Completion Tokens", 20),
+        ("Avg Completion Tokens", 21),
         ("Avg Total Tokens", 16),
         ("Time Samples", 13),
         ("Token Samples", 14),
