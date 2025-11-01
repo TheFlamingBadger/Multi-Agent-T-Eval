@@ -100,28 +100,58 @@ def combine_category_stats(file_stats: List[Dict[str, object]]) -> Dict[str, obj
     }
 
 
-def compute_scores(result):
-    instruct_list = [
-        (result['instruct_json']['json_format_metric'] + result['instruct_json']['json_args_em_metric']) / 2,
-        (result['instruct_json']['string_format_metric'] + result['instruct_json']['string_args_em_metric']) / 2,
-    ]
-    plan_list = [result['plan_str']['f1_score'], result['plan_json']['f1_score']]
-    reason_list = [result['reason_str']['thought'], result['rru_json']['thought']]
-    retrieve_list = [result['retrieve_str']['name'], result['rru_json']['name']]
-    understand_list = [result['understand_str']['args'], result['rru_json']['args']]
-    review_list = [result['review_str']['review_quality'], result['review_str']['review_quality']]
+def safe_mean(values: List[float]) -> Optional[float]:
+    filtered = [v for v in values if v is not None]
+    if not filtered:
+        return None
+    return float(np.mean(filtered))
 
-    final_score = [
-        np.mean(instruct_list),
-        np.mean(plan_list),
-        np.mean(reason_list),
-        np.mean(retrieve_list),
-        np.mean(understand_list),
-        np.mean(review_list),
-    ]
-    overall = np.mean(final_score)
+
+def compute_scores(result: Dict[str, dict]):
+    category_extractors = {
+        'Instruct': [
+            lambda r: (r['instruct_json']['json_format_metric'] + r['instruct_json']['json_args_em_metric']) / 2
+            if 'instruct_json' in r else None,
+            lambda r: (r['instruct_json']['string_format_metric'] + r['instruct_json']['string_args_em_metric']) / 2
+            if 'instruct_json' in r else None,
+        ],
+        'Plan': [
+            lambda r: r['plan_str']['f1_score'] if 'plan_str' in r else None,
+            lambda r: r['plan_json']['f1_score'] if 'plan_json' in r else None,
+        ],
+        'Reason': [
+            lambda r: r['reason_str']['thought'] if 'reason_str' in r else None,
+            lambda r: r['rru_json']['thought'] if 'rru_json' in r else None,
+        ],
+        'Retrieve': [
+            lambda r: r['retrieve_str']['name'] if 'retrieve_str' in r else None,
+            lambda r: r['rru_json']['name'] if 'rru_json' in r else None,
+        ],
+        'Understand': [
+            lambda r: r['understand_str']['args'] if 'understand_str' in r else None,
+            lambda r: r['rru_json']['args'] if 'rru_json' in r else None,
+        ],
+        'Review': [
+            lambda r: r['review_str']['review_quality'] if 'review_str' in r else None,
+            lambda r: r['review_str']['review_quality'] if 'review_str' in r else None,
+        ],
+    }
+
+    category_scores = []
+    for category, extractors in category_extractors.items():
+        values = []
+        for extractor in extractors:
+            try:
+                values.append(extractor(result))
+            except Exception:
+                values.append(None)
+        score = safe_mean(values)
+        category_scores.append((category, score))
+
+    final_score = [score for _, score in category_scores]
+    overall = safe_mean([score for score in final_score if score is not None])
     final_score.insert(0, overall)
-    return final_score
+    return final_score, category_scores
 
 
 def derive_model_name(result_path: str) -> str:
@@ -147,11 +177,15 @@ def format_value(value, decimals=2):
 def convert_results(result_path: str):
     result = mmengine.load(result_path)
     name_list = ['Overall', 'Instruct', 'Plan', 'Reason', 'Retrieve', 'Understand', 'Review']
-    final_scores = compute_scores(result)
+    final_scores, category_scores = compute_scores(result)
 
-    print("Cut Paste Results: ", np.array(final_scores) * 100)
+    cut_paste = np.array([
+        score * 100 if score is not None else np.nan for score in final_scores
+    ], dtype=float)
+    print("Cut Paste Results: ", cut_paste)
     for name, score in zip(name_list, final_scores):
-        print(f"{name}: {score * 100:.1f}", end='\t')
+        display = f"{score * 100:.1f}" if score is not None else "N/A"
+        print(f"{name}: {display}", end='\t')
 
     base_dir = os.path.dirname(result_path)
     model_name = derive_model_name(result_path)
@@ -180,16 +214,23 @@ def convert_results(result_path: str):
             }
 
     print("\n\nPer-category average inference time & token usage:")
-    header = [
-        "Category",
-        "Avg Time (s)",
-        "Avg Prompt Tokens",
-        "Avg Completion Tokens",
-        "Avg Total Tokens",
-        "Time Samples",
-        "Token Samples",
+    columns = [
+        ("Category", 12),
+        ("Avg Time (s)", 14),
+        ("Avg Prompt Tokens", 18),
+        ("Avg Completion Tokens", 20),
+        ("Avg Total Tokens", 16),
+        ("Time Samples", 13),
+        ("Token Samples", 14),
     ]
-    print('\t'.join(header))
+
+    def format_row(values):
+        padded = []
+        for (name, width), value in zip(columns, values):
+            padded.append(f"{str(value):<{width}}")
+        return ' '.join(padded)
+
+    print(format_row([name for name, _ in columns]))
 
     for category in name_list[1:]:
         stats = category_stats.get(category, {})
@@ -200,10 +241,16 @@ def convert_results(result_path: str):
         time_samples = stats.get('time_count', 0)
         token_samples = stats.get('token_count', 0)
 
-        print(
-            f"{category}\t{avg_time}\t{avg_prompt}\t{avg_completion}\t"
-            f"{avg_total}\t{time_samples}\t{token_samples}"
-        )
+        row = [
+            category,
+            avg_time,
+            avg_prompt,
+            avg_completion,
+            avg_total,
+            time_samples,
+            token_samples,
+        ]
+        print(format_row(row))
 
 
 if __name__ == '__main__':
