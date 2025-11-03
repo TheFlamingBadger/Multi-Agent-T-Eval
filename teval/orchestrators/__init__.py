@@ -3,6 +3,7 @@ from .direct import DirectOrchestrator
 from .thinking_tokens import ThinkingTokensOrchestrator
 from .multi_model import MultiModelOrchestrator
 from .azure_openai import AzureOpenAIOrchestrator
+from .react import ReActOrchestrator
 
 __all__ = [
     'BaseOrchestrator',
@@ -10,4 +11,5 @@ __all__ = [
     'ThinkingTokensOrchestrator',
     'MultiModelOrchestrator',
     'AzureOpenAIOrchestrator',
+    'ReActOrchestrator',
 ]

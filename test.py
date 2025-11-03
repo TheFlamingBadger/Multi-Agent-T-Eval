@@ -1,10 +1,11 @@
 import teval.evaluators as evaluator_factory
 from teval.utils.meta_template import meta_template_dict
 from teval.orchestrators import (
-    DirectOrchestrator, 
-    ThinkingTokensOrchestrator, 
+    DirectOrchestrator,
+    ThinkingTokensOrchestrator,
     MultiModelOrchestrator,
-    AzureOpenAIOrchestrator
+    AzureOpenAIOrchestrator,
+    ReActOrchestrator,
 )
 from lagent.llms.huggingface import HFTransformerCasualLM, HFTransformerChat
 from lagent.llms.openai import GPTAPI
@@ -35,8 +36,8 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=1)
     # Orchestrator arguments
     parser.add_argument('--orchestrator', type=str, default='direct', 
-                       choices=['direct', 'thinking', 'multi_model'],
-                       help='Orchestration strategy: direct (baseline), thinking (chain-of-thought), or multi_model')
+                       choices=['direct', 'thinking', 'multi_model', 'react'],
+                       help='Orchestration strategy: direct (baseline), thinking (chain-of-thought), multi_model, or react')
     parser.add_argument('--thinking_prompt', type=str, 
                        default="First, let's think step by step about how to approach this.",
                        help='Prompt for thinking phase (used with --orchestrator thinking)')
@@ -149,6 +150,9 @@ if __name__ == '__main__':
                     base_orchestrator,
                     strategy='sequential'
                 )
+            elif args.orchestrator == 'react':
+                base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
+                orchestrator = ReActOrchestrator(base_orchestrator)
         else:
             # Initialize LLM for non-Azure model types
             if args.model_type == 'api':
@@ -179,6 +183,8 @@ if __name__ == '__main__':
                     llm,
                     strategy='sequential'
                 )
+            elif args.orchestrator == 'react':
+                orchestrator = ReActOrchestrator(llm)
         
         print(f"Using {args.orchestrator} orchestrator")
         print(f"Tested {tested_num} samples, left {test_num} samples, total {total_num} samples")

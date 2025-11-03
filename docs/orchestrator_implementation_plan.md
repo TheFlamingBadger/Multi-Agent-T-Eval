@@ -21,7 +21,8 @@ teval/orchestrators/
 ├── base.py                  # Abstract base class (BaseOrchestrator)
 ├── direct.py                # Baseline - no orchestration
 ├── thinking_tokens.py       # Chain-of-thought reasoning
-└── multi_model.py           # Multi-model routing/ensemble
+├── multi_model.py           # Multi-model routing/ensemble
+└── react.py                 # ReAct-style reasoning + acting
 ```
 
 ## Core Components
@@ -158,12 +159,47 @@ orchestrator = MultiModelOrchestrator(
 Generate from multiple models and select best response.
 
 ```python
-orchestrator = MultiModelOrchestrator(
-    primary_llm=model1,
-    secondary_llms={'model2': model2, 'model3': model3},
-    strategy='ensemble',
-    ensemble_selection='longest'
-)
+    orchestrator = MultiModelOrchestrator(
+        primary_llm=model1,
+        secondary_llms={'model2': model2, 'model3': model3},
+        strategy='ensemble',
+        ensemble_selection='longest'
+    )
+```
+
+### 5. ReActOrchestrator
+
+**Location**: `teval/orchestrators/react.py`
+
+**Purpose**: Implements the ReAct (Reason + Act) prompting pattern. The orchestrator
+injects a dedicated system prompt that instructs the LLM to interleave tagged reasoning
+(`THOUGHT:`), tool usage (`ACTION:`), and feedback (`OBSERVATION:`) before emitting a
+`FINAL_ACTION:` line containing the user-facing answer.
+
+**Key Behaviors**:
+- Prepends the ReAct system message to the conversation (or inserts a new one if the
+  conversation starts with a user turn).
+- Calls the underlying LLM exactly once and captures the entire reasoning transcript.
+- Parses the response so that `completion()` returns only the `FINAL_ACTION` content.
+- Stores the reasoning tokens in `last_trace` under `reasoning_trace` and
+  `reasoning_steps` for post-hoc inspection.
+
+**Parameters**:
+- `thought_tag` / `action_tag` / `observation_tag` / `final_action_tag`: Customize
+  the tag strings enforced in the system prompt (defaults match the tokens listed above).
+- `react_system_prompt`: Override the generated system prompt if a bespoke instruction
+  set is desired.
+- `max_reasoning_steps`: Optional advisory limit mentioned to the model to discourage
+  infinite loops.
+
+**Usage Example**:
+```python
+from teval.orchestrators import ReActOrchestrator
+
+orchestrator = ReActOrchestrator(llm, max_reasoning_steps=8)
+responses = orchestrator.completion(messages, temperature=0.0)
+# responses -> ['FINAL ACTION CONTENT FOR USER']
+# orchestrator.last_trace[0]['steps'][0]['reasoning_trace'] contains the ReAct thoughts/actions.
 ```
 
 ## Integration with T-Eval
@@ -174,12 +210,17 @@ orchestrator = MultiModelOrchestrator(
 
 **1. Imports**:
 ```python
-from teval.orchestrators import DirectOrchestrator, ThinkingTokensOrchestrator, MultiModelOrchestrator
+from teval.orchestrators import (
+    DirectOrchestrator,
+    ThinkingTokensOrchestrator,
+    MultiModelOrchestrator,
+    ReActOrchestrator,
+)
 ```
 
 **2. New Command-Line Arguments**:
 ```bash
---orchestrator {direct,thinking,multi_model}
+--orchestrator {direct,thinking,multi_model,react}
     # Orchestration strategy (default: direct)
 
 --thinking_prompt STR
@@ -202,6 +243,8 @@ elif args.orchestrator == 'thinking':
     )
 elif args.orchestrator == 'multi_model':
     orchestrator = MultiModelOrchestrator(llm, strategy='sequential')
+elif args.orchestrator == 'react':
+    orchestrator = ReActOrchestrator(llm)
 ```
 
 **4. Modified infer() Function**:
@@ -251,6 +294,14 @@ python test.py --model_type api --model_path gpt-4 \
 ```bash
 python test.py --model_type api --model_path gpt-4 \
   --orchestrator multi_model \
+  --dataset_path data/instruct_v2.json \
+  --eval instruct
+```
+
+#### ReAct (Reason + Act)
+```bash
+python test.py --model_type api --model_path gpt-4 \
+  --orchestrator react \
   --dataset_path data/instruct_v2.json \
   --eval instruct
 ```
@@ -351,7 +402,7 @@ from teval.orchestrators import MyCustomOrchestrator
 
 # Add argument choice
 parser.add_argument('--orchestrator', type=str, default='direct',
-                   choices=['direct', 'thinking', 'multi_model', 'my_custom'])
+                   choices=['direct', 'thinking', 'multi_model', 'react', 'my_custom'])
 
 # Add initialization
 elif args.orchestrator == 'my_custom':
