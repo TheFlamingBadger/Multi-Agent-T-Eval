@@ -6,6 +6,7 @@ from teval.orchestrators import (
     MultiModelOrchestrator,
     AzureOpenAIOrchestrator,
     ReActOrchestrator,
+    ReasoningAsToolOrchestrator,
 )
 from lagent.llms.huggingface import HFTransformerCasualLM, HFTransformerChat
 from lagent.llms.openai import GPTAPI
@@ -36,8 +37,8 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=1)
     # Orchestrator arguments
     parser.add_argument('--orchestrator', type=str, default='direct', 
-                       choices=['direct', 'thinking', 'multi_model', 'react'],
-                       help='Orchestration strategy: direct (baseline), thinking (chain-of-thought), multi_model, or react')
+                       choices=['direct', 'thinking', 'multi_model', 'react', 'reasoning_tool'],
+                       help='Orchestration strategy: direct, thinking, multi_model, react, or reasoning_tool')
     parser.add_argument('--thinking_prompt', type=str, 
                        default="First, let's think step by step about how to approach this.",
                        help='Prompt for thinking phase (used with --orchestrator thinking)')
@@ -153,6 +154,12 @@ if __name__ == '__main__':
             elif args.orchestrator == 'react':
                 base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
                 orchestrator = ReActOrchestrator(base_orchestrator)
+            elif args.orchestrator == 'reasoning_tool':
+                base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
+                orchestrator = ReasoningAsToolOrchestrator(
+                    base_orchestrator,
+                    helper_env_path=args.azure_env_path,
+                )
         else:
             # Initialize LLM for non-Azure model types
             if args.model_type == 'api':
@@ -185,6 +192,11 @@ if __name__ == '__main__':
                 )
             elif args.orchestrator == 'react':
                 orchestrator = ReActOrchestrator(llm)
+            elif args.orchestrator == 'reasoning_tool':
+                orchestrator = ReasoningAsToolOrchestrator(
+                    llm,
+                    helper_env_path=args.azure_env_path,
+                )
         
         print(f"Using {args.orchestrator} orchestrator")
         print(f"Tested {tested_num} samples, left {test_num} samples, total {total_num} samples")

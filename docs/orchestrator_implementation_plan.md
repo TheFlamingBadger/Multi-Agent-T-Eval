@@ -22,7 +22,8 @@ teval/orchestrators/
 ├── direct.py                # Baseline - no orchestration
 ├── thinking_tokens.py       # Chain-of-thought reasoning
 ├── multi_model.py           # Multi-model routing/ensemble
-└── react.py                 # ReAct-style reasoning + acting
+├── react.py                 # ReAct-style reasoning + acting
+└── reasoning_tool.py        # Primary + Azure helper delegation
 ```
 
 ## Core Components
@@ -202,6 +203,37 @@ responses = orchestrator.completion(messages, temperature=0.0)
 # orchestrator.last_trace[0]['steps'][0]['reasoning_trace'] contains the ReAct thoughts/actions.
 ```
 
+### 6. ReasoningAsToolOrchestrator
+
+**Location**: `teval/orchestrators/reasoning_tool.py`
+
+**Purpose**: Lets a lightweight primary model defer challenging requests to a larger
+Azure-backed helper. The orchestrator injects a delegation-aware system prompt and
+manages helper invocation automatically.
+
+**Key Behaviors**:
+- Primary model receives guidance to emit either `FINAL_ANSWER: ...` or
+  `CALL_FOR_HELP`.
+- On `CALL_FOR_HELP`, the orchestrator forwards the original message history to an
+  internally managed `AzureOpenAIOrchestrator` instance.
+- The helper's response is returned directly to the caller while traces record both
+  stages.
+
+**Parameters**:
+- `helper_env_path`: Override path for Azure credential `.env` file (defaults to
+  environment discovery).
+- `call_token` / `final_token`: Customize escalation and completion markers.
+- `system_prompt`: Provide a custom delegation prompt if needed.
+
+**Usage Example**:
+```python
+from teval.orchestrators import ReasoningAsToolOrchestrator
+
+orchestrator = ReasoningAsToolOrchestrator(llm, helper_env_path=".env")
+answer = orchestrator.completion(messages)[0]
+# If the primary model delegated, the returned answer comes from the Azure helper.
+```
+
 ## Integration with T-Eval
 
 ### Modified Components
@@ -215,12 +247,13 @@ from teval.orchestrators import (
     ThinkingTokensOrchestrator,
     MultiModelOrchestrator,
     ReActOrchestrator,
+    ReasoningAsToolOrchestrator,
 )
 ```
 
 **2. New Command-Line Arguments**:
 ```bash
---orchestrator {direct,thinking,multi_model,react}
+--orchestrator {direct,thinking,multi_model,react,reasoning_tool}
     # Orchestration strategy (default: direct)
 
 --thinking_prompt STR
@@ -245,6 +278,11 @@ elif args.orchestrator == 'multi_model':
     orchestrator = MultiModelOrchestrator(llm, strategy='sequential')
 elif args.orchestrator == 'react':
     orchestrator = ReActOrchestrator(llm)
+elif args.orchestrator == 'reasoning_tool':
+    orchestrator = ReasoningAsToolOrchestrator(
+        llm,
+        helper_env_path=args.azure_env_path,
+    )
 ```
 
 **4. Modified infer() Function**:
@@ -302,6 +340,15 @@ python test.py --model_type api --model_path gpt-4 \
 ```bash
 python test.py --model_type api --model_path gpt-4 \
   --orchestrator react \
+  --dataset_path data/instruct_v2.json \
+  --eval instruct
+```
+
+#### Reasoning-as-a-Tool (Delegation to Azure Helper)
+```bash
+python test.py --model_type hf --model_path path/to/small-model \
+  --orchestrator reasoning_tool \
+  --azure_env_path .env \
   --dataset_path data/instruct_v2.json \
   --eval instruct
 ```
@@ -402,7 +449,7 @@ from teval.orchestrators import MyCustomOrchestrator
 
 # Add argument choice
 parser.add_argument('--orchestrator', type=str, default='direct',
-                   choices=['direct', 'thinking', 'multi_model', 'react', 'my_custom'])
+                   choices=['direct', 'thinking', 'multi_model', 'react', 'reasoning_tool', 'my_custom'])
 
 # Add initialization
 elif args.orchestrator == 'my_custom':
