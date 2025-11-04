@@ -226,7 +226,12 @@ if __name__ == '__main__':
             bert_score_model = "all-mpnet-base-v2"
             json_path = os.path.join(args.out_dir, model_display_name + '_' + str(args.test_num) + '.json')
         evaluator_class = getattr(evaluator_factory, eval_mapping[args.eval])
-        evaluator = evaluator_class(output_file_path, default_prompt_type=args.prompt_type, eval_type = args.eval, bert_score_model=bert_score_model)
+        evaluator = evaluator_class(
+            output_file_path,
+            default_prompt_type=args.prompt_type,
+            eval_type=args.eval,
+            bert_score_model=bert_score_model,
+        )
         if os.path.exists(json_path):
             results = mmengine.load(json_path)
         else:

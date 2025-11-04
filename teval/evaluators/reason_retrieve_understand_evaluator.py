@@ -1,21 +1,18 @@
-from collections import defaultdict
 import json
-from numpy import mean
+from datetime import datetime
+from typing import Dict, List
+from numpy import mean, ndarray
 from mmengine import load
-import evaluate
-import itertools
-import networkx as nx
 import numpy as np
-import copy
 import json
 import re
 from tqdm import tqdm
-import ast
 
 from teval.schema import ResponseDataSample
 from teval.utils.format_load import format_load
 from sentence_transformers import SentenceTransformer, util
-from termcolor import colored
+
+from .utils import annotate_dataset
 
 class ReasonRetrieveUnderstandEvaluator:
     """Planning Evaluation
@@ -30,6 +27,7 @@ class ReasonRetrieveUnderstandEvaluator:
         bert_score_model: str = "all-mpnet-base-v2", # ['thenlper/gte-large-zh', 'all-mpnet-base-v2']
         default_prompt_type: str = 'json',
         eval_type: str = 'reason',
+        annotation_path: str = None,
         **kwargs,
     ) -> None:
         self.bert_score_model = bert_score_model
@@ -40,10 +38,13 @@ class ReasonRetrieveUnderstandEvaluator:
         self.eval_type = eval_type
         self.valid_data_count = None
         self.sentence_model = SentenceTransformer(self.bert_score_model)
+        self.annotation_path = annotation_path or dataset_path
+        self.raw_dataset = None
 
     def _load_dataset(self):
         self.dataset = []
         dataset = load(self.dataset_path)
+        self.raw_dataset = dataset
         total_error = 0
         total_count = 0
         for key in dataset.keys():
@@ -52,7 +53,7 @@ class ReasonRetrieveUnderstandEvaluator:
             total_error += error
             total_count += 1
             self.dataset.append(
-                dict(response_data_sample=data_sample))
+                dict(sample_id=key, response_data_sample=data_sample))
 
         self.num_samples = len(self.dataset)
         # print("total_data_count:", total_count, "valid_data_count:", total_count - total_error)
@@ -117,6 +118,10 @@ class ReasonRetrieveUnderstandEvaluator:
 
         error = 0
         gt = self.format_load(gt_data)
+        meta_info = dict(
+            prompt_type=prompt_type,
+            eval_type=self.eval_type
+        )
         
         if prompt_type == 'json':
             pred = self.format_load(pred_data)
@@ -136,7 +141,7 @@ class ReasonRetrieveUnderstandEvaluator:
 
         if error == 1:
             pred = dict()
-        return ResponseDataSample(template = '', pred=pred, gt=gt), error
+        return ResponseDataSample(template = '', pred=pred, gt=gt, meta_data=meta_info), error
 
     def _evaluate(self, data_sample):
         """Evaluate the response data sample.
@@ -147,11 +152,33 @@ class ReasonRetrieveUnderstandEvaluator:
     def evaluate(self):
         self._load_dataset()
         results_list = []
-        for data_sample in tqdm(self.dataset):
-            metrics_result = self._evaluate(
-                data_sample['response_data_sample'])
-            results_list.append(metrics_result)
-        return self._post_process(results_list)
+        sample_ids: List[str] = []
+        for data_entry in tqdm(self.dataset):
+            sample_id = data_entry['sample_id']
+            response_sample = data_entry['response_data_sample']
+            metrics_input = self._evaluate(response_sample)
+            results_list.append(metrics_input)
+            sample_ids.append(sample_id)
+        aggregated_results, per_sample_metrics = self._post_process(results_list)
+        per_item_metrics: Dict[str, Dict[str, float]] = {}
+        evaluation_time = datetime.utcnow().isoformat()
+        for idx, sample_id in enumerate(sample_ids):
+            metrics = per_sample_metrics[idx]
+            cleaned_metrics = {
+                key: value.item() if isinstance(value, ndarray) else value
+                for key, value in metrics.items()
+            }
+            per_item_metrics[sample_id] = cleaned_metrics
+        if self.raw_dataset is not None:
+            annotate_dataset(
+                raw_dataset=self.raw_dataset,
+                per_item_metrics=per_item_metrics,
+                evaluator_name=self.__class__.__name__,
+                dataset_path=self.dataset_path,
+                annotation_path=self.annotation_path,
+                evaluated_at=evaluation_time,
+            )
+        return aggregated_results
 
     def find_a_dot_b_structure(self, text):
         # find a.b structure
@@ -251,10 +278,14 @@ class ReasonRetrieveUnderstandEvaluator:
         #     batch_arg_data = []
         #     batch_arg_id = []
         
-        results = dict()
-        for key in metric_keys:
-            results[key] = mean([metrics_results[key] for metrics_results in metrics_results])
-        return results
+        aggregated_results = dict()
+        if metrics_results:
+            for key in metric_keys:
+                aggregated_results[key] = mean([sample_metrics[key] for sample_metrics in metrics_results])
+        else:
+            for key in metric_keys:
+                aggregated_results[key] = 0.0
+        return aggregated_results, metrics_results
 
 class ReasonRetrieveUnderstandEvaluatorNoBatch:
     """Planning Evaluation
@@ -269,6 +300,7 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
         bert_score_model: str = "all-mpnet-base-v2",
         default_prompt_type: str = 'json',
         eval_type: str = 'reason',
+        annotation_path: str = None,
     ) -> None:
         self.bert_score_model = bert_score_model
         self.dataset_path = dataset_path
@@ -277,10 +309,13 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
         self.eval_type = eval_type
         self.valid_data_count = None
         self.sentence_model = SentenceTransformer(self.bert_score_model)
+        self.annotation_path = annotation_path or dataset_path
+        self.raw_dataset = None
 
     def _load_dataset(self):
         self.dataset = []
         dataset = load(self.dataset_path)
+        self.raw_dataset = dataset
         total_error = 0
         total_count = 0
         for key in dataset.keys():
@@ -289,7 +324,7 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
             total_error += error
             total_count += 1
             self.dataset.append(
-                dict(response_data_sample=data_sample))
+                dict(sample_id=key, response_data_sample=data_sample))
 
         self.num_samples = len(self.dataset)
         # print("total_data_count:", total_count, "valid_data_count:", total_count - total_error)
@@ -355,6 +390,10 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
 
         error = 0
         gt = self.format_load(gt_data)
+        meta_info = dict(
+            prompt_type=prompt_type,
+            eval_type=self.eval_type
+        )
         if prompt_type == 'json':
             # pred_data = pred_data.replace('\'', '\"')
             pred = self.format_load(pred_data)
@@ -374,7 +413,7 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
 
         if error == 1:
             pred = dict()
-        return ResponseDataSample(template = '', pred=pred, gt=gt), error
+        return ResponseDataSample(template = '', pred=pred, gt=gt, meta_data=meta_info), error
 
     def _evaluate(self, data_sample) -> dict:
         """Evaluate the response data sample.
@@ -431,11 +470,33 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
     def evaluate(self):
         self._load_dataset()
         results_list = []
-        for data_sample in tqdm(self.dataset):
-            metrics_result = self._evaluate(
-                data_sample['response_data_sample'])
+        sample_ids: List[str] = []
+        for data_entry in tqdm(self.dataset):
+            sample_id = data_entry['sample_id']
+            response_sample = data_entry['response_data_sample']
+            metrics_result = self._evaluate(response_sample)
             results_list.append(metrics_result)
-        return self._post_process(results_list)
+            sample_ids.append(sample_id)
+        aggregated_results, per_sample_metrics = self._post_process(results_list)
+        per_item_metrics: Dict[str, Dict[str, float]] = {}
+        evaluation_time = datetime.utcnow().isoformat()
+        for idx, sample_id in enumerate(sample_ids):
+            metrics = per_sample_metrics[idx]
+            cleaned_metrics = {
+                key: value.item() if isinstance(value, ndarray) else value
+                for key, value in metrics.items()
+            }
+            per_item_metrics[sample_id] = cleaned_metrics
+        if self.raw_dataset is not None:
+            annotate_dataset(
+                raw_dataset=self.raw_dataset,
+                per_item_metrics=per_item_metrics,
+                evaluator_name=self.__class__.__name__,
+                dataset_path=self.dataset_path,
+                annotation_path=self.annotation_path,
+                evaluated_at=evaluation_time,
+            )
+        return aggregated_results
 
     def _post_process(self, results_list):
         # list of dict to dict of list
@@ -449,6 +510,10 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
                 metric_keys = ['name', 'parse_rate']
             if self.eval_type == 'understand':
                 metric_keys = ['args_precision', 'args_recall', 'args_f1_score', 'parse_rate']
-        for key in metric_keys:
-            results[key] = mean([result[key] for result in results_list])
-        return results
+        if results_list:
+            for key in metric_keys:
+                results[key] = mean([result[key] for result in results_list])
+        else:
+            for key in metric_keys:
+                results[key] = 0.0
+        return results, results_list

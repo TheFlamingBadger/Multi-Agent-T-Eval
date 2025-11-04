@@ -114,6 +114,10 @@ Once you finish all tested samples, a detailed evluation results will be logged 
 python teval/utils/convert_results.py --result_path $out_dir/$model_display_name/$model_display_name_-1.json
 ```
 
+### 🔍 Per-sample Evaluation Metadata
+- Running `python test.py ... --eval <task>` enriches each prediction with a single `evaluation_result` score in `[0, 1]`, representing the mean of that sample's metrics.
+- The annotated scores are written back to the prediction JSON so downstream analysis can read both raw generations and their evaluation scores directly.
+
 ## 🔌 Protocols
 
 T-Eval adopts multi-conversation style evaluation to gauge the model. The format of our saved prompt is as follows:

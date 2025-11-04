@@ -1,19 +1,19 @@
-from collections import defaultdict
-import json
-from numpy import mean
+from datetime import datetime
+from typing import Dict
+from numpy import mean, ndarray
 from mmengine import load
 from teval.utils.format_load import format_load
-# import evaluate
 import itertools
 import networkx as nx
 import numpy as np
 import copy
-import json
 import re
 from tqdm import tqdm
 
 from teval.schema import ResponseDataSample
 from sentence_transformers import SentenceTransformer, util
+
+from .utils import annotate_dataset
 
 
 class PlanningEvaluator:
@@ -36,6 +36,7 @@ class PlanningEvaluator:
         match_strategy: str = 'bertscore', # ["bertscore", "permutation"]
         bert_score_model: str = "all-mpnet-base-v2", # ['thenlper/gte-large-zh', 'all-mpnet-base-v2']
         default_prompt_type: str = 'json', # ["json", "ReWOO"]
+        annotation_path: str | None = None,
         **kwargs,
     ) -> None:
         self.bert_score_model = bert_score_model
@@ -49,10 +50,13 @@ class PlanningEvaluator:
         self.match_strategy = match_strategy
         self.valid_data_count = None
         self.sentence_model = SentenceTransformer(self.bert_score_model)
+        self.annotation_path = annotation_path or dataset_path
+        self.raw_dataset = None
 
     def _load_dataset(self):
         self.dataset = []
         dataset = load(self.dataset_path)
+        self.raw_dataset = dataset
         total_error = 0
         total_count = 0
         for key in dataset.keys():
@@ -61,7 +65,7 @@ class PlanningEvaluator:
             total_error += error
             total_count += 1
             self.dataset.append(
-                dict(response_data_sample=data_sample))
+                dict(sample_id=key, response_data_sample=data_sample))
 
         self.num_samples = len(self.dataset)
         print("total_data_count:", total_count, "valid_data_count:", total_count - total_error)
@@ -113,6 +117,10 @@ class PlanningEvaluator:
         pred = dict()
         gt = dict()
         gt['planning'] = self.format_load(gt_data)
+        meta_info = dict(
+            prompt_type=prompt_type,
+            match_strategy=self.match_strategy
+        )
         if prompt_type == 'json':
             pred['planning'] = self.format_load(pred_data)
             if pred['planning'] == [] or gt['planning'] == []:
@@ -146,7 +154,7 @@ class PlanningEvaluator:
             if not (len(thoughts) == len(dependencies) and len(thoughts) == len(action_units)):
                 pred['planning'] = []
                 gt['planning'] = []
-                return ResponseDataSample(template = '', pred=pred, gt=gt), 1
+                return ResponseDataSample(template = '', pred=pred, gt=gt, meta_data=meta_info), 1
 
             plan_action = []
             for i in range(len(action_units)):
@@ -217,7 +225,7 @@ class PlanningEvaluator:
         else:
             raise NotImplementedError(f"Currently, we only support json and ReWOO format, but get {prompt_type}")
 
-        return ResponseDataSample(template = '', pred=pred, gt=gt), error
+        return ResponseDataSample(template = '', pred=pred, gt=gt, meta_data=meta_info), error
 
     def _evaluate(self, data_sample) -> dict:
         if self.match_strategy == 'bertscore':
@@ -237,11 +245,29 @@ class PlanningEvaluator:
     def evaluate(self):
         self._load_dataset()
         results_list = []
-        for data_sample in tqdm(self.dataset):
-            metrics_result = self._evaluate(
-                data_sample['response_data_sample'])
+        per_item_metrics: Dict[str, Dict[str, float]] = {}
+        evaluation_time = datetime.utcnow().isoformat()
+        for data_entry in tqdm(self.dataset):
+            sample_id = data_entry['sample_id']
+            response_sample = data_entry['response_data_sample']
+            metrics_result = self._evaluate(response_sample)
             results_list.append(metrics_result)
-        return self._post_process(results_list)
+            cleaned_metrics = {
+                key: value.item() if isinstance(value, ndarray) else value
+                for key, value in metrics_result.items()
+            }
+            per_item_metrics[sample_id] = cleaned_metrics
+        aggregated_results = self._post_process(results_list)
+        if self.raw_dataset is not None:
+            annotate_dataset(
+                raw_dataset=self.raw_dataset,
+                per_item_metrics=per_item_metrics,
+                evaluator_name=self.__class__.__name__,
+                dataset_path=self.dataset_path,
+                annotation_path=self.annotation_path,
+                evaluated_at=evaluation_time,
+            )
+        return aggregated_results
 
     def permutation_match(self, pred_plan, gt_plan) -> dict:
         '''

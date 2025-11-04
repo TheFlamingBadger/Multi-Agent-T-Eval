@@ -1,13 +1,14 @@
 from collections import defaultdict
-import json
+from datetime import datetime
+from typing import Dict
 from mmengine import load
 
-from teval.utils.template import parse_string
 from teval.schema import ResponseDataSample
-import ast
 import numpy as np
-from sentence_transformers import SentenceTransformer, util
+from numpy import ndarray
 from teval.utils.format_load import format_load
+
+from .utils import annotate_dataset
 
 class ReviewEvaluator:
     """Review Capability Evaluation
@@ -20,16 +21,20 @@ class ReviewEvaluator:
     def __init__(
         self,
         dataset_path: str,
+        annotation_path: str = None,
         # bert_score_model: str = "all-mpnet-base-v2",
         **kwargs,
     ) -> None:
         self.dataset_path = dataset_path
+        self.annotation_path = annotation_path or dataset_path
+        self.raw_dataset = None
         # self.bert_score_model = bert_score_model
         # self.sentence_model = SentenceTransformer(self.bert_score_model)
 
     def _load_dataset(self):
         self.dataset = []
         dataset = load(self.dataset_path)
+        self.raw_dataset = dataset
 
         for key in dataset.keys():
             datum = dataset[key]
@@ -37,6 +42,7 @@ class ReviewEvaluator:
             
             self.dataset.append(
                 dict(
+                    sample_id=key,
                     origin_prompt=datum['origin_prompt'],
                     response_data_sample=data_sample))
         self.num_samples = len(self.dataset)
@@ -108,11 +114,29 @@ class ReviewEvaluator:
     def evaluate(self):
         self._load_dataset()
         results_list = []
-        for data_sample in self.dataset:
-            metrics_result = self._evaluate(
-                data_sample['response_data_sample'])
+        per_item_metrics: Dict[str, Dict[str, float]] = {}
+        evaluation_time = datetime.utcnow().isoformat()
+        for data_entry in self.dataset:
+            sample_id = data_entry['sample_id']
+            response_sample = data_entry['response_data_sample']
+            metrics_result = self._evaluate(response_sample)
             results_list.append(metrics_result)
-        return self._post_process(results_list)
+            cleaned_metrics = {
+                key: value.item() if isinstance(value, ndarray) else value
+                for key, value in metrics_result.items()
+            }
+            per_item_metrics[sample_id] = cleaned_metrics
+        aggregated_results = self._post_process(results_list)
+        if self.raw_dataset is not None:
+            annotate_dataset(
+                raw_dataset=self.raw_dataset,
+                per_item_metrics=per_item_metrics,
+                evaluator_name=self.__class__.__name__,
+                dataset_path=self.dataset_path,
+                annotation_path=self.annotation_path,
+                evaluated_at=evaluation_time,
+            )
+        return aggregated_results
 
     def _post_process(self, results_list):
         # list of dict to dict of list
