@@ -40,6 +40,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help='Optional title for the generated figure.',
     )
+    parser.add_argument(
+        '--download_only',
+        action='store_true',
+        help='Skip GUI display and write the figure as a PNG beside the result file.',
+    )
     return parser.parse_args()
 
 
@@ -362,7 +367,14 @@ def main() -> None:
     fig, axes = plt.subplots(1, 2, figsize=(16, 6), constrained_layout=True)
     plot_scores(categories, scores, overall, title=args.title, ax=axes[0])
     plot_error_counts(categories, error_counts, title='Errors by Category', ax=axes[1])
-    plt.show()
+
+    if args.download_only:
+        result_path = Path(args.result_path)
+        output_path = result_path.with_suffix('.png')
+        fig.savefig(output_path, dpi=150)
+        print(f"Saved plot to {output_path}", flush=True)
+    else:
+        plt.show()
 
 
 if __name__ == '__main__':
