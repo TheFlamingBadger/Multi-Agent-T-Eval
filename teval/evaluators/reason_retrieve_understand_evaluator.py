@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Any, Dict, List
 from numpy import mean, ndarray
 from mmengine import load
 import numpy as np
@@ -42,8 +42,8 @@ class ReasonRetrieveUnderstandEvaluator:
         self.raw_dataset = None
 
     def _load_dataset(self):
-        self.dataset = []
-        dataset = load(self.dataset_path)
+        self.dataset: list[Dict[str, Any]] = []
+        dataset: Dict[str, Any] = load(self.dataset_path)
         self.raw_dataset = dataset
         total_error = 0
         total_count = 0
@@ -313,8 +313,8 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
         self.raw_dataset = None
 
     def _load_dataset(self):
-        self.dataset = []
-        dataset = load(self.dataset_path)
+        self.dataset: list[Dict[str, Any]] = []
+        dataset: Dict[str, Any] = load(self.dataset_path)
         self.raw_dataset = dataset
         total_error = 0
         total_count = 0
