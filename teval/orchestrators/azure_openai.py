@@ -1,9 +1,12 @@
 import ast
-from typing import List, Dict, Union, Optional
-from time import perf_counter
-from .base import BaseOrchestrator
 import os
+import re
+from time import perf_counter
+from typing import Dict, List, Optional, Union
+
 from dotenv import load_dotenv
+
+from .base import BaseOrchestrator
 
 
 class AzureOpenAIOrchestrator(BaseOrchestrator):
@@ -209,12 +212,20 @@ class AzureOpenAIOrchestrator(BaseOrchestrator):
             return parsed
         return None
 
+    def _sanitize_function_name(self, name: Optional[str]) -> Optional[str]:
+        if not isinstance(name, str):
+            return None
+        sanitized = re.sub(r'[^a-zA-Z0-9_-]+', '_', name.strip())
+        sanitized = sanitized.strip('_')
+        if not sanitized:
+            return None
+        return sanitized
+
     def _infer_name_from_content(self, content):
         parsed = self._parse_structured_content(content)
         if isinstance(parsed, dict):
             name = parsed.get('name')
-            if isinstance(name, str) and name.strip():
-                return name.strip()
+            return self._sanitize_function_name(name)
         return None
 
     def _ensure_function_names(self, history: List[Dict[str, object]]) -> List[Dict[str, object]]:
@@ -228,9 +239,13 @@ class AzureOpenAIOrchestrator(BaseOrchestrator):
             elif role == 'function':
                 if not message_copy.get('name'):
                     inferred_name = pending_name or self._infer_name_from_content(message_copy.get('content'))
-                    if not inferred_name:
-                        inferred_name = 'unknown_function'
-                    message_copy['name'] = inferred_name
+                    sanitized = self._sanitize_function_name(inferred_name)
+                    if not sanitized:
+                        sanitized = 'unknown_function'
+                    message_copy['name'] = sanitized
+                else:
+                    sanitized = self._sanitize_function_name(message_copy.get('name'))
+                    message_copy['name'] = sanitized or 'unknown_function'
                 pending_name = None
             else:
                 pending_name = None
