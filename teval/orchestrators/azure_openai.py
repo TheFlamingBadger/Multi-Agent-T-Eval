@@ -1,3 +1,4 @@
+import ast
 from typing import List, Dict, Union, Optional
 from time import perf_counter
 from .base import BaseOrchestrator
@@ -138,10 +139,11 @@ class AzureOpenAIOrchestrator(BaseOrchestrator):
         traces = []
         for history in histories:
             try:
+                prepared_history = self._ensure_function_names(history)
                 call_start = perf_counter()
                 response = self.client.chat.completions.create(
                     model=self.deployment,
-                    messages=history,
+                    messages=prepared_history,
                     **api_params
                 )
                 call_elapsed = perf_counter() - call_start
@@ -163,7 +165,7 @@ class AzureOpenAIOrchestrator(BaseOrchestrator):
                     "steps": [
                         {
                             "type": "api_call",
-                            "messages": history,
+                            "messages": prepared_history,
                             "response": content,
                             "usage": usage_dict,
                             "elapsed_seconds": call_elapsed,
@@ -183,7 +185,7 @@ class AzureOpenAIOrchestrator(BaseOrchestrator):
                     "steps": [
                         {
                             "type": "api_call",
-                            "messages": history,
+                            "messages": prepared_history,
                             "error": str(e),
                             "elapsed_seconds": call_elapsed,
                         }
@@ -192,7 +194,49 @@ class AzureOpenAIOrchestrator(BaseOrchestrator):
                 })
         self._record_trace(traces)
         return self._denormalize_output(responses, was_single)
-    
+
+    def _parse_structured_content(self, content):
+        if not isinstance(content, str):
+            return None
+        stripped = content.strip()
+        if not stripped:
+            return None
+        try:
+            parsed = ast.literal_eval(stripped)
+        except (ValueError, SyntaxError):
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+        return None
+
+    def _infer_name_from_content(self, content):
+        parsed = self._parse_structured_content(content)
+        if isinstance(parsed, dict):
+            name = parsed.get('name')
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        return None
+
+    def _ensure_function_names(self, history: List[Dict[str, object]]) -> List[Dict[str, object]]:
+        prepared: List[Dict[str, object]] = []
+        pending_name: Optional[str] = None
+        for message in history:
+            message_copy = dict(message)
+            role = message_copy.get('role')
+            if role == 'assistant':
+                pending_name = self._infer_name_from_content(message_copy.get('content'))
+            elif role == 'function':
+                if not message_copy.get('name'):
+                    inferred_name = pending_name or self._infer_name_from_content(message_copy.get('content'))
+                    if not inferred_name:
+                        inferred_name = 'unknown_function'
+                    message_copy['name'] = inferred_name
+                pending_name = None
+            else:
+                pending_name = None
+            prepared.append(message_copy)
+        return prepared
+
     def _prepare_api_params(self, kwargs: dict) -> dict:
         """
         Prepare parameters for Azure OpenAI API call.
