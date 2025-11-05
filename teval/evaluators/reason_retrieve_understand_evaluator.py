@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List
 from numpy import mean, ndarray
 from mmengine import load
@@ -161,7 +161,7 @@ class ReasonRetrieveUnderstandEvaluator:
             sample_ids.append(sample_id)
         aggregated_results, per_sample_metrics = self._post_process(results_list)
         per_item_metrics: Dict[str, Dict[str, float]] = {}
-        evaluation_time = datetime.utcnow().isoformat()
+        evaluation_time = datetime.now(timezone.utc).isoformat()
         for idx, sample_id in enumerate(sample_ids):
             metrics = per_sample_metrics[idx]
             cleaned_metrics = {
@@ -479,7 +479,7 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
             sample_ids.append(sample_id)
         aggregated_results, per_sample_metrics = self._post_process(results_list)
         per_item_metrics: Dict[str, Dict[str, float]] = {}
-        evaluation_time = datetime.utcnow().isoformat()
+        evaluation_time = datetime.now(timezone.utc).isoformat()
         for idx, sample_id in enumerate(sample_ids):
             metrics = per_sample_metrics[idx]
             cleaned_metrics = {

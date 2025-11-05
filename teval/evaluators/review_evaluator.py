@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict
 from mmengine import load
 
@@ -115,7 +115,7 @@ class ReviewEvaluator:
         self._load_dataset()
         results_list = []
         per_item_metrics: Dict[str, Dict[str, float]] = {}
-        evaluation_time = datetime.utcnow().isoformat()
+        evaluation_time = datetime.now(timezone.utc).isoformat()
         for data_entry in self.dataset:
             sample_id = data_entry['sample_id']
             response_sample = data_entry['response_data_sample']
