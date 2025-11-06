@@ -196,12 +196,13 @@ class ReasoningAsToolOrchestrator(BaseOrchestrator):
         Build the default system prompt instructing the primary model how to delegate.
         """
         return (
-            "You are an efficient problem solver with access to a much stronger Azure-based helper model. "
-            "Decide whether you can answer the user's request on your own.\n"
-            f"- If you can solve it, respond with a single line `{self.final_token}: <your answer>`.\n"
-            f"- If it requires advanced reasoning or you are uncertain, emit `{self.call_token}` "
-            "on its own line (optionally with a short justification after a colon) to delegate the task.\n"
-            "Do not provide any additional text after the final decision line."
+            "You are a lightweight small-language model assistant with limited reasoning depth. "
+            "You have a much stronger large language model available and you should delegate to it for anything "
+            "non-trivial or whenever you feel even slightly uncertain about your own answer.\n"
+            f"- If the request is extremely simple and you are fully confident, respond with a single line `{self.final_token}: <your answer>`.\n"
+            f"- Otherwise, emit `{self.call_token}` on its own line (optionally followed by a short justification after a colon) "
+            "to ask the language language model to take over.\n"
+            "Never include any additional text after the final decision line."
         )
 
 

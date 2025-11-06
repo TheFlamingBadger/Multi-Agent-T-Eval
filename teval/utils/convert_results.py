@@ -66,10 +66,12 @@ def compute_file_stats(file_path: str) -> Optional[Dict[str, object]]:
             time_count += 1
 
         usage_totals = aggregate_usage(entry.get('orchestration_trace'))
-        if usage_totals:
-            token_count += 1
-            for key in TOKEN_KEYS:
-                token_sums[key] += usage_totals.get(key, 0.0)
+        if 'prediction' not in entry and not usage_totals:
+            continue
+
+        token_count += 1
+        for key in TOKEN_KEYS:
+            token_sums[key] += usage_totals.get(key, 0.0) if usage_totals else 0.0
 
     return {
         'time_sum': time_sum,

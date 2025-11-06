@@ -108,6 +108,13 @@ def infer(dataset, orchestrator, out_dir, tmp_folder_name='tmp', test_num = 1, b
                     dataset[data_ptr]['orchestration_trace'] = trace_batch[ptr]
                 dataset[data_ptr]['inference_time_seconds'] = batch_elapsed if len(batch_infer_ids) == 1 else per_item_elapsed
                 mmengine.dump(dataset[data_ptr], os.path.join(out_dir, tmp_folder_name, f'{data_ptr}.json'))
+                trace = dataset[data_ptr].get('orchestration_trace')
+                if (
+                    isinstance(trace, dict)
+                    and trace.get('strategy') == 'reasoning_as_tool'
+                    and trace.get('escalated')
+                ):
+                    print(f"[reasoning_tool] Escalated to Azure helper for /{data_ptr}.json")
             batch_infer_ids = []; batch_infer_list = []
         
     # load results from cache
