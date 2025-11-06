@@ -31,6 +31,36 @@ else:
     )
 
 
+DATASET_PREFIX_MAP: List[Tuple[str, str]] = [
+    ('reason_retrieve_understand_json', 'rru_json'),
+    ('plan_json', 'plan_json'),
+    ('plan_str', 'plan_str'),
+    ('reason_str', 'reason_str'),
+    ('retrieve_str', 'retrieve_str'),
+    ('understand_str', 'understand_str'),
+    ('review_str', 'review_str'),
+    ('instruct', 'instruct_json'),
+]
+
+
+def extract_parse_rate_map(result_summary: dict) -> Dict[str, Optional[float]]:
+    """Map dataset summary keys to parse rates when available."""
+    parse_rates: Dict[str, Optional[float]] = {}
+    for key, value in result_summary.items():
+        if isinstance(value, dict):
+            parse_rates[key] = value.get('parse_rate')
+    return parse_rates
+
+
+def infer_summary_key_from_filename(filename: str) -> Optional[str]:
+    """Infer summary dictionary key from a result filename stem."""
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    for prefix, summary_key in sorted(DATASET_PREFIX_MAP, key=lambda item: len(item[0]), reverse=True):
+        if stem.startswith(prefix):
+            return summary_key
+    return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Plot evaluation scores for a result file.')
     parser.add_argument('--result_path', type=str, required=True, help='Path to the evaluation JSON result.')
@@ -270,14 +300,20 @@ def extract_error_code(entry: Dict) -> Optional[str]:
     return None
 
 
-def gather_category_errors(result_path: str, categories: Iterable[str]) -> Dict[str, Counter]:
-    """Aggregate error-code counts per benchmark category."""
+def gather_category_errors_with_parse(
+    result_path: str,
+    categories: Iterable[str],
+    parse_rate_map: Dict[str, Optional[float]],
+) -> Tuple[Dict[str, Counter], Dict[str, int], Dict[str, float]]:
+    """Aggregate error counts, totals, and parsed counts per benchmark category."""
     base_dir = os.path.dirname(result_path)
     model_name = derive_model_name(result_path)
     category_files = build_category_file_map(model_name)
 
     file_cache: Dict[str, Optional[dict]] = {}
     error_counts: Dict[str, Counter] = {category: Counter() for category in categories}
+    total_counts: Dict[str, int] = {category: 0 for category in categories}
+    parsed_counts: Dict[str, float] = {category: 0.0 for category in categories}
 
     for category in categories:
         filenames = category_files.get(category, [])
@@ -292,19 +328,28 @@ def gather_category_errors(result_path: str, categories: Iterable[str]) -> Dict[
                 if not data:
                     continue
                 iterable = data.values() if isinstance(data, dict) else data
-                for entry in iterable:
-                    if not isinstance(entry, dict):
-                        continue
+                entries = [entry for entry in iterable if isinstance(entry, dict)]
+                sample_count = len(entries)
+                total_counts[category] += sample_count
+
+                summary_key = infer_summary_key_from_filename(file_path)
+                parse_rate = parse_rate_map.get(summary_key) if summary_key else None
+                effective_parse_rate = 1.0 if parse_rate is None else max(min(parse_rate, 1.0), 0.0)
+                parsed_counts[category] += effective_parse_rate * sample_count
+
+                for entry in entries:
                     code = extract_error_code(entry)
                     if code:
                         error_counts[category][code] += 1
 
-    return error_counts
+    return error_counts, total_counts, parsed_counts
 
 
 def plot_error_counts(
     categories: Iterable[str],
     error_counts: Dict[str, Counter],
+    total_counts: Dict[str, int],
+    parsed_counts: Dict[str, float],
     *,
     title: Optional[str] = None,
     ax: Optional[Axes] = None,
@@ -317,33 +362,61 @@ def plot_error_counts(
         fig = ax.figure
 
     categories_list = list(categories)
-    all_error_codes = sorted(
-        {code for counter in error_counts.values() for code in counter}
+    parsed_values = [min(parsed_counts.get(category, 0.0), total_counts.get(category, 0)) for category in categories_list]
+    bars = ax.bar(
+        categories_list,
+        parsed_values,
+        color='tab:green',
+        edgecolor='black',
+        label='Parsed',
     )
 
-    bottom = [0] * len(categories_list)
-    if all_error_codes:
-        for code in all_error_codes:
-            values = [error_counts[category].get(code, 0) for category in categories_list]
-            ax.bar(categories_list, values, bottom=bottom, label=code)
-            bottom = [b + v for b, v in zip(bottom, values)]
-        ax.legend(title='Error Code', loc='upper right')
-    else:
-        ax.bar(categories_list, [0] * len(categories_list), color='0.85', edgecolor='black')
-        for idx, category in enumerate(categories_list):
-            ax.text(
-                idx,
-                0.02,
-                '0',
-                ha='center',
-                va='bottom',
-                fontsize=10,
-            )
+    all_error_codes = sorted({code for counter in error_counts.values() for code in counter})
+    bottom = parsed_values[:]
+    error_totals = {
+        category: sum(counter.values()) for category, counter in error_counts.items()
+    }
 
-    ax.set_ylabel('Error Count')
+    for code in all_error_codes:
+        values: List[float] = []
+        for idx, category in enumerate(categories_list):
+            leftover = max(total_counts.get(category, 0) - bottom[idx], 0.0)
+            raw_total = error_totals.get(category, 0)
+            raw_value = error_counts[category].get(code, 0)
+            if raw_total > 0 and leftover > 0:
+                scale = leftover / raw_total
+                values.append(raw_value * scale)
+            else:
+                values.append(0.0)
+        ax.bar(categories_list, values, bottom=bottom, label=code)
+        bottom = [b + v for b, v in zip(bottom, values)]
+
+    residual = []
+    for idx, category in enumerate(categories_list):
+        total = total_counts.get(category, 0)
+        gap = max(total - bottom[idx], 0.0)
+        residual.append(gap)
+    if any(value > 1e-6 for value in residual):
+        ax.bar(
+            categories_list,
+            residual,
+            bottom=bottom,
+            color='0.8',
+            edgecolor='black',
+            label='Unclassified',
+        )
+        bottom = [b + v for b, v in zip(bottom, residual)]
+
+    if all_error_codes or any(parsed_values):
+        ax.legend(title='Outcome', loc='upper right')
+
+    ax.set_ylabel('Sample Count')
     ax.set_xlabel('Benchmark Category')
     ax.set_title(title or 'Errors by Category')
     ax.grid(axis='y', linestyle=':', linewidth=0.8, alpha=0.7)
+    y_max = max(total_counts.get(category, 0) for category in categories_list) if categories_list else 0
+    if y_max > 0:
+        ax.set_ylim(0, y_max * 1.05)
 
     if created_fig:
         fig.tight_layout()
@@ -356,17 +429,29 @@ def main() -> None:
     reporter = ProgressReporter(total_steps=4)
     reporter.update('Loading result file')
     result = load_result(args.result_path)
+    parse_rate_map = extract_parse_rate_map(result)
 
     reporter.update('Computing category scores')
     categories, scores, overall = prepare_category_data(result)
 
     reporter.update('Aggregating error counts')
-    error_counts = gather_category_errors(args.result_path, categories)
+    error_counts, total_counts, parsed_counts = gather_category_errors_with_parse(
+        args.result_path,
+        categories,
+        parse_rate_map,
+    )
 
     reporter.update('Rendering figure')
     fig, axes = plt.subplots(1, 2, figsize=(16, 6), constrained_layout=True)
     plot_scores(categories, scores, overall, title=args.title, ax=axes[0])
-    plot_error_counts(categories, error_counts, title='Errors by Category', ax=axes[1])
+    plot_error_counts(
+        categories,
+        error_counts,
+        total_counts,
+        parsed_counts,
+        title='Parsing & Error Breakdown',
+        ax=axes[1],
+    )
 
     if args.download_only:
         result_path = Path(args.result_path)
