@@ -31,36 +31,6 @@ else:
     )
 
 
-DATASET_PREFIX_MAP: List[Tuple[str, str]] = [
-    ('reason_retrieve_understand_json', 'rru_json'),
-    ('plan_json', 'plan_json'),
-    ('plan_str', 'plan_str'),
-    ('reason_str', 'reason_str'),
-    ('retrieve_str', 'retrieve_str'),
-    ('understand_str', 'understand_str'),
-    ('review_str', 'review_str'),
-    ('instruct', 'instruct_json'),
-]
-
-
-def extract_parse_rate_map(result_summary: dict) -> Dict[str, Optional[float]]:
-    """Map dataset summary keys to parse rates when available."""
-    parse_rates: Dict[str, Optional[float]] = {}
-    for key, value in result_summary.items():
-        if isinstance(value, dict):
-            parse_rates[key] = value.get('parse_rate')
-    return parse_rates
-
-
-def infer_summary_key_from_filename(filename: str) -> Optional[str]:
-    """Infer summary dictionary key from a result filename stem."""
-    stem = os.path.splitext(os.path.basename(filename))[0]
-    for prefix, summary_key in sorted(DATASET_PREFIX_MAP, key=lambda item: len(item[0]), reverse=True):
-        if stem.startswith(prefix):
-            return summary_key
-    return None
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Plot evaluation scores for a result file.')
     parser.add_argument('--result_path', type=str, required=True, help='Path to the evaluation JSON result.')
@@ -303,17 +273,18 @@ def extract_error_code(entry: Dict) -> Optional[str]:
 def gather_category_errors_with_parse(
     result_path: str,
     categories: Iterable[str],
-    parse_rate_map: Dict[str, Optional[float]],
-) -> Tuple[Dict[str, Counter], Dict[str, int], Dict[str, float]]:
-    """Aggregate error counts, totals, and parsed counts per benchmark category."""
+) -> Tuple[Dict[str, Counter], Dict[str, Counter], Dict[str, int]]:
+    """Aggregate error counts and parse failure modes per benchmark category."""
     base_dir = os.path.dirname(result_path)
     model_name = derive_model_name(result_path)
     category_files = build_category_file_map(model_name)
 
     file_cache: Dict[str, Optional[dict]] = {}
     error_counts: Dict[str, Counter] = {category: Counter() for category in categories}
+    parse_failure_counts: Dict[str, Counter] = {
+        category: Counter() for category in categories
+    }
     total_counts: Dict[str, int] = {category: 0 for category in categories}
-    parsed_counts: Dict[str, float] = {category: 0.0 for category in categories}
 
     for category in categories:
         filenames = category_files.get(category, [])
@@ -331,25 +302,23 @@ def gather_category_errors_with_parse(
                 entries = [entry for entry in iterable if isinstance(entry, dict)]
                 sample_count = len(entries)
                 total_counts[category] += sample_count
-
-                summary_key = infer_summary_key_from_filename(file_path)
-                parse_rate = parse_rate_map.get(summary_key) if summary_key else None
-                effective_parse_rate = 1.0 if parse_rate is None else max(min(parse_rate, 1.0), 0.0)
-                parsed_counts[category] += effective_parse_rate * sample_count
-
                 for entry in entries:
+                    failure_info = entry.get('parse_failure')
+                    if isinstance(failure_info, dict):
+                        mode = failure_info.get('mode') or 'parse_failure'
+                        parse_failure_counts[category][mode] += 1
                     code = extract_error_code(entry)
                     if code:
                         error_counts[category][code] += 1
 
-    return error_counts, total_counts, parsed_counts
+    return error_counts, parse_failure_counts, total_counts
 
 
 def plot_error_counts(
     categories: Iterable[str],
     error_counts: Dict[str, Counter],
+    parse_failure_counts: Dict[str, Counter],
     total_counts: Dict[str, int],
-    parsed_counts: Dict[str, float],
     *,
     title: Optional[str] = None,
     ax: Optional[Axes] = None,
@@ -362,8 +331,13 @@ def plot_error_counts(
         fig = ax.figure
 
     categories_list = list(categories)
-    parsed_values = [min(parsed_counts.get(category, 0.0), total_counts.get(category, 0)) for category in categories_list]
-    bars = ax.bar(
+    parsed_values: List[float] = []
+    for category in categories_list:
+        total = total_counts.get(category, 0)
+        fail_total = sum(parse_failure_counts[category].values())
+        parsed_values.append(max(total - fail_total, 0))
+
+    ax.bar(
         categories_list,
         parsed_values,
         color='tab:green',
@@ -371,8 +345,25 @@ def plot_error_counts(
         label='Parsed',
     )
 
-    all_error_codes = sorted({code for counter in error_counts.values() for code in counter})
     bottom = parsed_values[:]
+
+    all_parse_modes = sorted(
+        {mode for counter in parse_failure_counts.values() for mode in counter}
+    )
+    for mode in all_parse_modes:
+        values = [parse_failure_counts[category].get(mode, 0) for category in categories_list]
+        ax.bar(
+            categories_list,
+            values,
+            bottom=bottom,
+            label=f'parse:{mode}',
+        )
+        bottom = [b + v for b, v in zip(bottom, values)]
+
+    all_error_codes = sorted(
+        {code for counter in error_counts.values() for code in counter}
+    )
+    error_bottom = bottom[:]
     error_totals = {
         category: sum(counter.values()) for category, counter in error_counts.items()
     }
@@ -380,7 +371,7 @@ def plot_error_counts(
     for code in all_error_codes:
         values: List[float] = []
         for idx, category in enumerate(categories_list):
-            leftover = max(total_counts.get(category, 0) - bottom[idx], 0.0)
+            leftover = max(total_counts.get(category, 0) - error_bottom[idx], 0.0)
             raw_total = error_totals.get(category, 0)
             raw_value = error_counts[category].get(code, 0)
             if raw_total > 0 and leftover > 0:
@@ -388,26 +379,26 @@ def plot_error_counts(
                 values.append(raw_value * scale)
             else:
                 values.append(0.0)
-        ax.bar(categories_list, values, bottom=bottom, label=code)
-        bottom = [b + v for b, v in zip(bottom, values)]
+        ax.bar(categories_list, values, bottom=error_bottom, label=code)
+        error_bottom = [b + v for b, v in zip(error_bottom, values)]
 
     residual = []
     for idx, category in enumerate(categories_list):
         total = total_counts.get(category, 0)
-        gap = max(total - bottom[idx], 0.0)
+        gap = max(total - error_bottom[idx], 0.0)
         residual.append(gap)
     if any(value > 1e-6 for value in residual):
         ax.bar(
             categories_list,
             residual,
-            bottom=bottom,
+            bottom=error_bottom,
             color='0.8',
             edgecolor='black',
             label='Unclassified',
         )
-        bottom = [b + v for b, v in zip(bottom, residual)]
+        error_bottom = [b + v for b, v in zip(error_bottom, residual)]
 
-    if all_error_codes or any(parsed_values):
+    if all_error_codes or all_parse_modes or any(parsed_values):
         ax.legend(title='Outcome', loc='upper right')
 
     ax.set_ylabel('Sample Count')
@@ -429,16 +420,13 @@ def main() -> None:
     reporter = ProgressReporter(total_steps=4)
     reporter.update('Loading result file')
     result = load_result(args.result_path)
-    parse_rate_map = extract_parse_rate_map(result)
-
     reporter.update('Computing category scores')
     categories, scores, overall = prepare_category_data(result)
 
     reporter.update('Aggregating error counts')
-    error_counts, total_counts, parsed_counts = gather_category_errors_with_parse(
+    error_counts, parse_failure_counts, total_counts = gather_category_errors_with_parse(
         args.result_path,
         categories,
-        parse_rate_map,
     )
 
     reporter.update('Rendering figure')
@@ -447,8 +435,8 @@ def main() -> None:
     plot_error_counts(
         categories,
         error_counts,
+        parse_failure_counts,
         total_counts,
-        parsed_counts,
         title='Parsing & Error Breakdown',
         ax=axes[1],
     )

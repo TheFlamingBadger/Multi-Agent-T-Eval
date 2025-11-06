@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from numpy import mean, ndarray
 from mmengine import load
 from teval.utils.format_load import format_load
+from teval.utils.parse_failure_tracker import ParseFailureTracker
 import itertools
 import networkx as nx
 import numpy as np
@@ -56,6 +57,9 @@ class PlanningEvaluator:
         self.sentence_model = SentenceTransformer(self.bert_score_model)
         self.annotation_path = annotation_path or dataset_path
         self.raw_dataset = None
+        self._parse_tracker = ParseFailureTracker(
+            dataset_path=self.dataset_path, evaluator_name=self.__class__.__name__
+        )
 
     def _load_dataset(self):
         self.dataset: list[Dict[str, Any]] = []
@@ -65,10 +69,16 @@ class PlanningEvaluator:
         total_count = 0
         for key in dataset.keys():
             datum = dataset[key]
-            data_sample, error = self._process_response(datum)
+            data_sample, error, failure_info = self._process_response(datum)
             total_error += error
             total_count += 1
-            self.dataset.append(dict(sample_id=key, response_data_sample=data_sample))
+            self.dataset.append(
+                dict(
+                    sample_id=key,
+                    response_data_sample=data_sample,
+                    parse_failure=failure_info,
+                )
+            )
 
         self.num_samples = len(self.dataset)
         print(
@@ -79,31 +89,60 @@ class PlanningEvaluator:
         )
         self.valid_data_count = total_count - total_error
 
-    def format_load(self, data):
+    def _record_parse_failure(
+        self,
+        sample_id: str,
+        failure_info: Optional[Dict[str, Any]],
+    ) -> None:
+        if failure_info is None:
+            return
+        prediction = None
+        if self.raw_dataset and sample_id in self.raw_dataset:
+            prediction = self.raw_dataset[sample_id].get("prediction")
+            self.raw_dataset[sample_id]["parse_failure"] = failure_info
+        self._parse_tracker.record(
+            sample_id,
+            mode=failure_info.get("mode", "parse_failure"),
+            detail=failure_info.get("detail"),
+            response_format=failure_info.get("prompt_type"),
+            prediction=prediction,
+        )
+
+    def _clear_parse_failure(self, sample_id: str) -> None:
+        if self.raw_dataset and sample_id in self.raw_dataset:
+            self.raw_dataset[sample_id].pop("parse_failure", None)
+        self._parse_tracker.clear(sample_id)
+
+    def format_load(
+        self, data
+    ) -> Tuple[List[Dict[str, Any]], Optional[str], Optional[str]]:
         r"""
         ensure evaluator can work correctly under any data input
         """
         try:
             json_format = format_load(data, start_character="[", end_character="]")
-        except Exception as e:
-            return []
-        if type(json_format) != list:
-            return []
-        for i in range(len(json_format)):
+        except Exception as exc:
+            return [], "json_parse_error", str(exc)
+        if not isinstance(json_format, list):
+            return [], "not_list_response", f"type={type(json_format).__name__}"
+        normalized: List[Dict[str, Any]] = []
+        for idx, item in enumerate(json_format):
             try:
-                json_format[i] = {
-                    "name": str(json_format[i]["name"]),
-                    "id": int(json_format[i]["id"]),
-                    "args": str(json_format[i]["args"]),
-                }
-            except Exception as e:
-                return []
-        return json_format
+                normalized.append(
+                    {
+                        "name": str(item["name"]),
+                        "id": int(item["id"]),
+                        "args": str(item["args"]),
+                    }
+                )
+            except Exception as exc:
+                return [], "invalid_plan_item", f"index={idx}: {exc}"
+        return normalized, None, None
 
     def _process_response(
         self,
         datum,
-    ) -> Tuple[ResponseDataSample, int]:
+    ) -> Tuple[ResponseDataSample, int, Optional[Dict[str, Any]]]:
         """Process the response to needed format.
         Args:
             datum(dict): inputs.
@@ -124,12 +163,36 @@ class PlanningEvaluator:
         error = 0
         pred = dict()
         gt = dict()
-        gt["planning"] = self.format_load(gt_data)
+        failure_info: Optional[Dict[str, Any]] = None
+        gt_plan, gt_failure_mode, gt_failure_detail = self.format_load(gt_data)
+        gt["planning"] = gt_plan
+        if gt_failure_mode:
+            failure_info = dict(
+                mode=f"ground_truth_{gt_failure_mode}",
+                detail=gt_failure_detail,
+                prompt_type=prompt_type,
+            )
         meta_info = dict(prompt_type=prompt_type, match_strategy=self.match_strategy)
         if prompt_type == "json":
-            pred["planning"] = self.format_load(pred_data)
-            if pred["planning"] == [] or gt["planning"] == []:
+            pred_plan, pred_failure_mode, pred_failure_detail = self.format_load(
+                pred_data
+            )
+            pred["planning"] = pred_plan
+            if pred_failure_mode:
                 error = 1
+                failure_info = dict(
+                    mode=pred_failure_mode,
+                    detail=pred_failure_detail,
+                    prompt_type=prompt_type,
+                )
+            elif pred_plan == [] or gt_plan == []:
+                error = 1
+                if failure_info is None:
+                    failure_info = dict(
+                        mode="empty_plan",
+                        detail=None,
+                        prompt_type=prompt_type,
+                    )
 
         elif prompt_type == "ReWOO":
             """
@@ -162,11 +225,20 @@ class PlanningEvaluator:
             ):
                 pred["planning"] = []
                 gt["planning"] = []
+                failure_info = dict(
+                    mode="rewoo_structure_mismatch",
+                    detail="length mismatch among plan/dependency/action entries",
+                    prompt_type=prompt_type,
+                )
                 return (
                     ResponseDataSample(
-                        template="", pred=pred, gt=gt, meta_data=meta_info
+                        template="",
+                        pred=dict(planning=[]),
+                        gt=dict(planning=[]),
+                        meta_data=meta_info,
                     ),
                     1,
+                    failure_info,
                 )
 
             plan_action = []
@@ -239,6 +311,11 @@ class PlanningEvaluator:
             pred["planning"] = pred_actions
             if len(pred["planning"]) == 0:
                 error = 1
+                failure_info = dict(
+                    mode="empty_plan",
+                    detail="no actions matched from string prompt",
+                    prompt_type=prompt_type,
+                )
         else:
             raise NotImplementedError(
                 f"Currently, we only support json and ReWOO format, but get {prompt_type}"
@@ -247,6 +324,7 @@ class PlanningEvaluator:
         return (
             ResponseDataSample(template="", pred=pred, gt=gt, meta_data=meta_info),
             error,
+            failure_info,
         )
 
     def _evaluate(self, data_sample) -> dict:
@@ -271,6 +349,9 @@ class PlanningEvaluator:
 
     def evaluate(self):
         self._load_dataset()
+        self._parse_tracker = ParseFailureTracker(
+            dataset_path=self.dataset_path, evaluator_name=self.__class__.__name__
+        )
         results_list = []
         per_item_metrics: Dict[str, Dict[str, float]] = {}
         evaluation_time = datetime.now(timezone.utc).isoformat()
@@ -284,6 +365,18 @@ class PlanningEvaluator:
                 for key, value in metrics_result.items()
             }
             per_item_metrics[sample_id] = cleaned_metrics
+            failure_info = data_entry.get("parse_failure")
+            if failure_info:
+                self._record_parse_failure(sample_id, failure_info)
+            elif cleaned_metrics.get("parse_rate", 1) == 0:
+                inferred_failure = dict(
+                    mode="parse_failure_unclassified",
+                    detail=None,
+                    prompt_type=response_sample.meta_data.get("prompt_type"),
+                )
+                self._record_parse_failure(sample_id, inferred_failure)
+            else:
+                self._clear_parse_failure(sample_id)
         aggregated_results = self._post_process(results_list)
         if self.raw_dataset is not None:
             annotate_dataset(
@@ -294,6 +387,7 @@ class PlanningEvaluator:
                 annotation_path=self.annotation_path,
                 evaluated_at=evaluation_time,
             )
+        self._parse_tracker.write_files()
         return aggregated_results
 
     def permutation_match(self, pred_plan, gt_plan) -> dict:

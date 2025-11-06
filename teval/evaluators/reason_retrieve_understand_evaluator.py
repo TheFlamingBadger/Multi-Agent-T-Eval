@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 from numpy import mean, ndarray
 from mmengine import load
 import numpy as np
@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from teval.schema import ResponseDataSample
 from teval.utils.format_load import format_load
+from teval.utils.parse_failure_tracker import ParseFailureTracker
 from sentence_transformers import SentenceTransformer, util
 
 from .utils import annotate_dataset
@@ -40,6 +41,9 @@ class ReasonRetrieveUnderstandEvaluator:
         self.sentence_model = SentenceTransformer(self.bert_score_model)
         self.annotation_path = annotation_path or dataset_path
         self.raw_dataset = None
+        self._parse_tracker = ParseFailureTracker(
+            dataset_path=self.dataset_path, evaluator_name=self.__class__.__name__
+        )
 
     def _load_dataset(self):
         self.dataset: list[Dict[str, Any]] = []
@@ -49,56 +53,85 @@ class ReasonRetrieveUnderstandEvaluator:
         total_count = 0
         for key in dataset.keys():
             datum = dataset[key]
-            data_sample, error = self._process_response(datum)
+            data_sample, error, failure_info = self._process_response(datum)
             total_error += error
             total_count += 1
             self.dataset.append(
-                dict(sample_id=key, response_data_sample=data_sample))
+                dict(
+                    sample_id=key,
+                    response_data_sample=data_sample,
+                    parse_failure=failure_info,
+                )
+            )
 
         self.num_samples = len(self.dataset)
         # print("total_data_count:", total_count, "valid_data_count:", total_count - total_error)
         self.valid_data_count = total_count - total_error
 
-    def format_load(self, data):
+    def _record_parse_failure(
+        self, sample_id: str, failure_info: Optional[Dict[str, Any]]
+    ) -> None:
+        if failure_info is None:
+            return
+        prediction = None
+        if self.raw_dataset and sample_id in self.raw_dataset:
+            prediction = self.raw_dataset[sample_id].get("prediction")
+            self.raw_dataset[sample_id]["parse_failure"] = failure_info
+        self._parse_tracker.record(
+            sample_id,
+            mode=failure_info.get("mode", "parse_failure"),
+            detail=failure_info.get("detail"),
+            response_format=failure_info.get("response_format"),
+            prediction=prediction,
+        )
+
+    def _clear_parse_failure(self, sample_id: str) -> None:
+        if self.raw_dataset and sample_id in self.raw_dataset:
+            self.raw_dataset[sample_id].pop("parse_failure", None)
+        self._parse_tracker.clear(sample_id)
+
+    def format_load(
+        self, data
+    ) -> Tuple[Dict[str, Any], Optional[str], Optional[str]]:
         r'''
             ensure evaluator can work correctly under any data input
         '''
         try:
             json_format = format_load(data, start_character='{', end_character='}')
-        except Exception as e:
-            return {}
-        if type(json_format) != dict:
-            return {}
-        prepared_json_format = dict()
+        except Exception as exc:
+            return {}, "json_parse_error", str(exc)
+        if not isinstance(json_format, dict):
+            return {}, "not_dict_response", f"type={type(json_format).__name__}"
+        prepared_json_format: Dict[str, Any] = {}
         try:
             prepared_json_format['thought'] = str(json_format['thought'])
-        except Exception as e:
+        except Exception:
             prepared_json_format['thought'] = ''
         try:
             prepared_json_format['name'] = str(json_format['name'])
-        except Exception as e:
+        except Exception:
             prepared_json_format['name'] = ''
 
         if self.default_prompt_type == 'json':
             try:
-                if isinstance(json_format['args'], dict):
+                if isinstance(json_format.get('args'), dict):
                     prepared_json_format['args'] = json_format['args']
                 else:
                     prepared_json_format['args'] = dict()
-            except:
+            except Exception:
                 prepared_json_format['args'] = dict()
         else:
             try:
                 prepared_json_format['args'] = str(json_format['args'])
-            except Exception as e:
+            except Exception:
                 prepared_json_format['args'] = ""
-        
-        return prepared_json_format
+
+        return prepared_json_format, None, None
 
     def _process_response(
         self,
         datum,
-    ) -> ResponseDataSample:
+    ) -> Tuple[ResponseDataSample, int, Optional[Dict[str, Any]]]:
         """Process the response to needed format.
         Args:
             datum(dict): inputs.
@@ -117,16 +150,36 @@ class ReasonRetrieveUnderstandEvaluator:
             prompt_type = self.default_prompt_type
 
         error = 0
-        gt = self.format_load(gt_data)
+        failure_info: Optional[Dict[str, Any]] = None
+        gt, gt_failure_mode, gt_failure_detail = self.format_load(gt_data)
         meta_info = dict(
             prompt_type=prompt_type,
             eval_type=self.eval_type
         )
+        if gt_failure_mode:
+            failure_info = dict(
+                mode=f"ground_truth_{gt_failure_mode}",
+                detail=gt_failure_detail,
+                response_format=prompt_type,
+            )
         
         if prompt_type == 'json':
-            pred = self.format_load(pred_data)
+            pred, pred_failure_mode, pred_failure_detail = self.format_load(pred_data)
+            if pred_failure_mode:
+                error = 1
+                failure_info = dict(
+                    mode=pred_failure_mode,
+                    detail=pred_failure_detail,
+                    response_format=prompt_type,
+                )
             if pred == {} or gt == {}:
                 error = 1
+                if failure_info is None:
+                    failure_info = dict(
+                        mode="empty_fields",
+                        detail="prediction or ground truth missing required keys",
+                        response_format=prompt_type,
+                    )
         elif prompt_type == 'str':
             # choose the first line
             pred = dict()
@@ -141,7 +194,11 @@ class ReasonRetrieveUnderstandEvaluator:
 
         if error == 1:
             pred = dict()
-        return ResponseDataSample(template = '', pred=pred, gt=gt, meta_data=meta_info), error
+        return (
+            ResponseDataSample(template='', pred=pred, gt=gt, meta_data=meta_info),
+            error,
+            failure_info,
+        )
 
     def _evaluate(self, data_sample):
         """Evaluate the response data sample.
@@ -151,6 +208,9 @@ class ReasonRetrieveUnderstandEvaluator:
 
     def evaluate(self):
         self._load_dataset()
+        self._parse_tracker = ParseFailureTracker(
+            dataset_path=self.dataset_path, evaluator_name=self.__class__.__name__
+        )
         results_list = []
         sample_ids: List[str] = []
         for data_entry in tqdm(self.dataset):
@@ -159,6 +219,18 @@ class ReasonRetrieveUnderstandEvaluator:
             metrics_input = self._evaluate(response_sample)
             results_list.append(metrics_input)
             sample_ids.append(sample_id)
+            failure_info = data_entry.get("parse_failure")
+            if failure_info:
+                self._record_parse_failure(sample_id, failure_info)
+            elif len(response_sample.pred.keys()) == 0:
+                inferred_failure = dict(
+                    mode="parse_failure_unclassified",
+                    detail=None,
+                    response_format=response_sample.meta_data.get("prompt_type"),
+                )
+                self._record_parse_failure(sample_id, inferred_failure)
+            else:
+                self._clear_parse_failure(sample_id)
         aggregated_results, per_sample_metrics = self._post_process(results_list)
         per_item_metrics: Dict[str, Dict[str, float]] = {}
         evaluation_time = datetime.now(timezone.utc).isoformat()
@@ -178,6 +250,7 @@ class ReasonRetrieveUnderstandEvaluator:
                 annotation_path=self.annotation_path,
                 evaluated_at=evaluation_time,
             )
+        self._parse_tracker.write_files()
         return aggregated_results
 
     def find_a_dot_b_structure(self, text):
@@ -469,6 +542,9 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
 
     def evaluate(self):
         self._load_dataset()
+        self._parse_tracker = ParseFailureTracker(
+            dataset_path=self.dataset_path, evaluator_name=self.__class__.__name__
+        )
         results_list = []
         sample_ids: List[str] = []
         for data_entry in tqdm(self.dataset):
@@ -477,6 +553,18 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
             metrics_result = self._evaluate(response_sample)
             results_list.append(metrics_result)
             sample_ids.append(sample_id)
+            failure_info = data_entry.get("parse_failure")
+            if failure_info:
+                self._record_parse_failure(sample_id, failure_info)
+            elif len(response_sample.pred.keys()) == 0:
+                inferred_failure = dict(
+                    mode="parse_failure_unclassified",
+                    detail=None,
+                    response_format=response_sample.meta_data.get("prompt_type"),
+                )
+                self._record_parse_failure(sample_id, inferred_failure)
+            else:
+                self._clear_parse_failure(sample_id)
         aggregated_results, per_sample_metrics = self._post_process(results_list)
         per_item_metrics: Dict[str, Dict[str, float]] = {}
         evaluation_time = datetime.now(timezone.utc).isoformat()
@@ -496,6 +584,7 @@ class ReasonRetrieveUnderstandEvaluatorNoBatch:
                 annotation_path=self.annotation_path,
                 evaluated_at=evaluation_time,
             )
+        self._parse_tracker.write_files()
         return aggregated_results
 
     def _post_process(self, results_list):
