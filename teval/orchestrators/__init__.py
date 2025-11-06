@@ -5,6 +5,7 @@ from .multi_model import MultiModelOrchestrator
 from .azure_openai import AzureOpenAIOrchestrator
 from .react import ReActOrchestrator
 from .reasoning_tool import ReasoningAsToolOrchestrator
+from .json_fallback import JsonFallbackOrchestrator
 
 __all__ = [
     'BaseOrchestrator',
@@ -14,4 +15,5 @@ __all__ = [
     'AzureOpenAIOrchestrator',
     'ReActOrchestrator',
     'ReasoningAsToolOrchestrator',
+    'JsonFallbackOrchestrator',
 ]

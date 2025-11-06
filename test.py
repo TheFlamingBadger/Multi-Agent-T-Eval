@@ -7,6 +7,7 @@ from teval.orchestrators import (
     AzureOpenAIOrchestrator,
     ReActOrchestrator,
     ReasoningAsToolOrchestrator,
+    JsonFallbackOrchestrator,
 )
 from lagent.llms.huggingface import HFTransformerCasualLM, HFTransformerChat
 from lagent.llms.openai import GPTAPI
@@ -37,8 +38,8 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=1)
     # Orchestrator arguments
     parser.add_argument('--orchestrator', type=str, default='direct', 
-                       choices=['direct', 'thinking', 'multi_model', 'react', 'reasoning_tool'],
-                       help='Orchestration strategy: direct, thinking, multi_model, react, or reasoning_tool')
+                       choices=['direct', 'thinking', 'multi_model', 'react', 'reasoning_tool', 'json_fallback'],
+                       help='Orchestration strategy: direct, thinking, multi_model, react, reasoning_tool, or json_fallback')
     parser.add_argument('--thinking_prompt', type=str, 
                        default="First, let's think step by step about how to approach this.",
                        help='Prompt for thinking phase (used with --orchestrator thinking)')
@@ -167,6 +168,12 @@ if __name__ == '__main__':
                     base_orchestrator,
                     helper_env_path=args.azure_env_path,
                 )
+            elif args.orchestrator == 'json_fallback':
+                base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
+                orchestrator = JsonFallbackOrchestrator(
+                    base_orchestrator,
+                    helper_env_path=args.azure_env_path,
+                )
         else:
             # Initialize LLM for non-Azure model types
             if args.model_type == 'api':
@@ -201,6 +208,11 @@ if __name__ == '__main__':
                 orchestrator = ReActOrchestrator(llm)
             elif args.orchestrator == 'reasoning_tool':
                 orchestrator = ReasoningAsToolOrchestrator(
+                    llm,
+                    helper_env_path=args.azure_env_path,
+                )
+            elif args.orchestrator == 'json_fallback':
+                orchestrator = JsonFallbackOrchestrator(
                     llm,
                     helper_env_path=args.azure_env_path,
                 )
