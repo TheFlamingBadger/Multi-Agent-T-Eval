@@ -1,6 +1,7 @@
 import argparse
 import os
-from typing import Any, Dict, List, Optional, Tuple
+import re
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import mmengine
 
@@ -18,6 +19,94 @@ from teval.utils.convert_results import (
     build_category_file_map,
     resolve_category_files,
 )
+
+
+JSON_ERROR_HINTS: List[Tuple[re.Pattern[str], str]] = [
+    (re.compile(r"property name enclosed in double quotes", re.IGNORECASE), "missing_key"),
+    (re.compile(r"expecting '\]'", re.IGNORECASE), "missing_bracket"),
+    (re.compile(r"expecting '\}'", re.IGNORECASE), "missing_brace"),
+    (re.compile(r"expecting ',' delimiter", re.IGNORECASE), "missing_delimiter"),
+    (re.compile(r"expecting ':' delimiter", re.IGNORECASE), "missing_delimiter"),
+    (re.compile(r"extra data", re.IGNORECASE), "extra_data"),
+    (re.compile(r"unterminated string", re.IGNORECASE), "unterminated_string"),
+    (re.compile(r"invalid control character", re.IGNORECASE), "invalid_control_char"),
+    (re.compile(r"invalid escape", re.IGNORECASE), "invalid_escape"),
+    (re.compile(r"expecting value", re.IGNORECASE), "missing_value"),
+]
+
+
+def _normalize_error_label(parts: List[Optional[str]]) -> Optional[str]:
+    cleaned: List[str] = []
+    for part in parts:
+        if part is None:
+            continue
+        text = str(part).strip()
+        if not text or text.lower() == "none":
+            continue
+        cleaned.append(re.sub(r"\s+", "_", text))
+    if not cleaned:
+        return None
+    return "_".join(cleaned)
+
+
+def _classify_jsondecode_error(message: Optional[str]) -> Optional[str]:
+    if not message:
+        return None
+    lowered = message.lower()
+    for pattern, label in JSON_ERROR_HINTS:
+        if pattern.search(lowered):
+            return label
+    return None
+
+
+def _describe_parse_error(parse_attempt: Dict[str, Any]) -> str:
+    if not parse_attempt:
+        return "unknown_error"
+
+    issue = parse_attempt.get("issue")
+    if issue:
+        normalized_issue = _normalize_error_label([issue])
+        if normalized_issue:
+            return normalized_issue
+
+    err_type = parse_attempt.get("error_type")
+    err_message = parse_attempt.get("error_message") or parse_attempt.get("detail")
+
+    if (err_type or "").lower() == "jsondecodeerror":
+        detail = _classify_jsondecode_error(err_message)
+        if detail:
+            return detail
+
+    normalized = _normalize_error_label([err_type, err_message])
+    if normalized:
+        return normalized
+
+    normalized = _normalize_error_label([err_type])
+    if normalized:
+        return normalized
+
+    if err_message:
+        normalized = _normalize_error_label([err_message])
+        if normalized:
+            return normalized
+
+    return "unknown_error"
+
+
+def _shorten_dataset_label(label: str, existing: Set[str]) -> str:
+    stem = os.path.splitext(os.path.basename(label))[0]
+    parts = [part for part in stem.split("_") if part]
+    if len(parts) >= 2:
+        short = "_".join(parts[:2])
+    else:
+        short = stem
+
+    candidate = short
+    counter = 2
+    while candidate in existing:
+        candidate = f"{short}_{counter}"
+        counter += 1
+    return candidate
 
 
 def parse_args() -> argparse.Namespace:
@@ -103,7 +192,7 @@ def aggregate_counts(result_path: str, label: Optional[str] = None) -> Dict[str,
         parse_attempt = (
             trace.get("steps", [{}])[0].get("parse_attempt", {}) if trace.get("steps") else {}
         )
-        err_type = parse_attempt.get("error_type") or parse_attempt.get("issue") or "unknown_error"
+        err_type = _describe_parse_error(parse_attempt)
         parse_counts[err_type] = parse_counts.get(err_type, 0) + 1
 
         if success:
@@ -184,10 +273,13 @@ def build_sankey_data(
     values: List[int] = []
 
     dataset_indices: Dict[str, int] = {}
+    used_dataset_labels: Set[str] = {"All Samples"}
     for stats in file_stats:
         node_idx = len(node_labels)
         dataset_indices[stats["label"]] = node_idx
-        node_labels.append(stats["label"])
+        display_label = _shorten_dataset_label(stats["label"], used_dataset_labels)
+        node_labels.append(display_label)
+        used_dataset_labels.add(display_label)
         sources.append(0)
         targets.append(node_idx)
         values.append(stats["total"])
@@ -217,26 +309,24 @@ def build_sankey_data(
             targets.append(parse_node_indices[err_type])
             values.append(count)
 
-    secondary_nodes_correct: Dict[str, int] = {}
-    secondary_nodes_incorrect: Dict[str, int] = {}
+    secondary_correct_idx: Optional[int] = None
+    secondary_incorrect_idx: Optional[int] = None
+    if parse_node_indices:
+        secondary_correct_idx = len(node_labels)
+        node_labels.append("Secondary Correct")
+        secondary_incorrect_idx = len(node_labels)
+        node_labels.append("Secondary Incorrect")
 
     for err_type, node_idx in parse_node_indices.items():
-        corr_idx = len(node_labels)
-        node_labels.append(f"Secondary Correct ({err_type})")
-        secondary_nodes_correct[err_type] = corr_idx
-        inc_idx = len(node_labels)
-        node_labels.append(f"Secondary Incorrect ({err_type})")
-        secondary_nodes_incorrect[err_type] = inc_idx
-
         sec_correct = global_stats["secondary_correct"].get(err_type, 0)
         sec_incorrect = global_stats["secondary_incorrect"].get(err_type, 0)
-        if sec_correct:
+        if sec_correct and secondary_correct_idx is not None:
             sources.append(node_idx)
-            targets.append(corr_idx)
+            targets.append(secondary_correct_idx)
             values.append(sec_correct)
-        if sec_incorrect:
+        if sec_incorrect and secondary_incorrect_idx is not None:
             sources.append(node_idx)
-            targets.append(inc_idx)
+            targets.append(secondary_incorrect_idx)
             values.append(sec_incorrect)
 
     return node_labels, sources, targets, values
