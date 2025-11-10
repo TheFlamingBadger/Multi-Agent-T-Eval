@@ -1,3 +1,30 @@
+devices_override=""
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --devices)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --devices requires a value (e.g., --devices 0,1)"
+                exit 1
+            fi
+            devices_override="$2"
+            shift 2
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
+
+if [ -n "$devices_override" ]; then
+    export CUDA_VISIBLE_DEVICES="$devices_override"
+fi
+if [ -n "$CUDA_VISIBLE_DEVICES" ]; then
+    echo "Using CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
+fi
+
 echo "model_type: $1"
 
 model_path=$2

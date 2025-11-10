@@ -37,23 +37,6 @@ def parse_args() -> argparse.Namespace:
         default="Single-Model Orchestrator Results",
         help="Optional diagram title.",
     )
-    parser.add_argument(
-        "--download",
-        action="store_true",
-        help="When set, save the figure instead of opening an interactive window.",
-    )
-    parser.add_argument(
-        "--download-format",
-        choices=["png", "html"],
-        default="png",
-        help="Output format when --download is set (default: png).",
-    )
-    parser.add_argument(
-        "--download-path",
-        type=str,
-        default=None,
-        help="Optional explicit path for the exported figure.",
-    )
     return parser.parse_args()
 
 
@@ -236,26 +219,9 @@ def main() -> None:
     )
     fig.update_layout(title_text=args.title, font=dict(size=12))
 
-    if args.download:
-        if args.download_path:
-            output_path = args.download_path
-        else:
-            stem = os.path.splitext(os.path.basename(result_path))[0]
-            output_path = os.path.join(
-                os.path.dirname(result_path),
-                f"{stem}_single_model.{args.download_format}",
-            )
-        if args.download_format == "html":
-            if not output_path.lower().endswith(".html"):
-                output_path = os.path.splitext(output_path)[0] + ".html"
-            fig.write_html(output_path)
-        else:
-            if not output_path.lower().endswith(".png"):
-                output_path = os.path.splitext(output_path)[0] + ".png"
-            fig.write_image(output_path)
-        print(f"Saved visualization to {output_path}")
-    else:
-        fig.show()
+    auto_html_path = os.path.splitext(args.result_path)[0] + ".html"
+    fig.write_html(auto_html_path)
+    print(f"Saved interactive HTML to {auto_html_path}")
 
 
 if __name__ == "__main__":  # pragma: no cover
