@@ -37,6 +37,12 @@ JSON_ERROR_HINTS: List[Tuple[re.Pattern[str], str]] = [
     (re.compile(r"expecting value", re.IGNORECASE), "missing_value"),
 ]
 
+FORMAT_LABELS = {
+    "json": "JSON Samples",
+    "str": "String Samples",
+}
+FORMAT_ORDER = ["str", "json"]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -127,9 +133,9 @@ def _strip_code_fence(text: str) -> str:
     return stripped.strip()
 
 
-def _attempt_parse_prediction(prediction: Any) -> Tuple[bool, Optional[str]]:
+def _normalize_prediction(prediction: Any) -> str:
     if prediction is None:
-        return False, "missing_prediction"
+        return ""
     if not isinstance(prediction, str):
         normalized = str(prediction)
     else:
@@ -137,8 +143,15 @@ def _attempt_parse_prediction(prediction: Any) -> Tuple[bool, Optional[str]]:
     normalized = normalized.strip()
     if normalized.startswith("```"):
         normalized = _strip_code_fence(normalized)
+    return normalized.strip()
+
+
+def _attempt_parse_prediction(prediction: Any, require_json: bool) -> Tuple[bool, Optional[str]]:
+    normalized = _normalize_prediction(prediction)
     if not normalized:
         return False, "empty_prediction"
+    if not require_json:
+        return True, None
     try:
         json.loads(normalized)
     except Exception as exc:  # pragma: no cover
@@ -147,6 +160,37 @@ def _attempt_parse_prediction(prediction: Any) -> Tuple[bool, Optional[str]]:
         )
         return False, label
     return True, None
+
+
+def _init_format_bucket() -> Dict[str, Any]:
+    return {
+        "total": 0,
+        "primary_success": 0,
+        "primary_failure": 0,
+        "parse_counts": {},
+        "parse_success": {},
+        "parse_failure": {},
+    }
+
+
+def _merge_format_stats(dst: Dict[str, Any], src: Dict[str, Any]) -> None:
+    dst["total"] += src.get("total", 0)
+    dst["primary_success"] += src.get("primary_success", 0)
+    dst["primary_failure"] += src.get("primary_failure", 0)
+    for err_type, count in src.get("parse_counts", {}).items():
+        dst["parse_counts"][err_type] = dst["parse_counts"].get(err_type, 0) + count
+    for err_type, count in src.get("parse_success", {}).items():
+        dst["parse_success"][err_type] = dst["parse_success"].get(err_type, 0) + count
+    for err_type, count in src.get("parse_failure", {}).items():
+        dst["parse_failure"][err_type] = dst["parse_failure"].get(err_type, 0) + count
+
+
+def _response_format(entry: Dict[str, Any]) -> str:
+    meta = entry.get("meta_data") or {}
+    fmt = str(meta.get("response_format", "json")).lower()
+    if fmt == "str":
+        return "str"
+    return "json"
 
 
 def _iter_samples(result_path: str):
@@ -173,6 +217,7 @@ def aggregate_counts(result_path: str, label: str | None = None) -> Dict[str, An
         "parse_failure": {},
         "file_path": result_path,
         "label": label or os.path.basename(result_path),
+        "formats": {},
     }
 
     for _, entry in _iter_samples(result_path):
@@ -182,22 +227,31 @@ def aggregate_counts(result_path: str, label: str | None = None) -> Dict[str, An
         if not isinstance(trace, dict):
             continue
         outcome = _outcome(entry)
+        fmt = _response_format(entry)
+        fmt_bucket = stats["formats"].setdefault(fmt, _init_format_bucket())
         stats["total"] += 1
+        fmt_bucket["total"] += 1
 
-        parse_ok, err_label = _attempt_parse_prediction(entry.get("prediction"))
+        require_json = fmt != "str"
+        parse_ok, err_label = _attempt_parse_prediction(entry.get("prediction"), require_json=require_json)
         if not parse_ok:
             label = err_label or "parse_error"
             stats["parse_counts"][label] = stats["parse_counts"].get(label, 0) + 1
+            fmt_bucket["parse_counts"][label] = fmt_bucket["parse_counts"].get(label, 0) + 1
             if outcome == "success":
                 stats["parse_success"][label] = stats["parse_success"].get(label, 0) + 1
+                fmt_bucket["parse_success"][label] = fmt_bucket["parse_success"].get(label, 0) + 1
             else:
                 stats["parse_failure"][label] = stats["parse_failure"].get(label, 0) + 1
+                fmt_bucket["parse_failure"][label] = fmt_bucket["parse_failure"].get(label, 0) + 1
             continue
 
         if outcome == "success":
             stats["primary_success"] += 1
+            fmt_bucket["primary_success"] += 1
         else:
             stats["primary_failure"] += 1
+            fmt_bucket["primary_failure"] += 1
 
     return stats
 
@@ -227,6 +281,7 @@ def aggregate_file_list(file_paths: List[str]) -> Tuple[List[Dict[str, Any]], Di
         "parse_counts": {},
         "parse_success": {},
         "parse_failure": {},
+        "formats": {},
     }
 
     for file_path in file_paths:
@@ -249,6 +304,9 @@ def aggregate_file_list(file_paths: List[str]) -> Tuple[List[Dict[str, Any]], Di
                 global_stats["parse_failure"].get(err_type, 0)
                 + stats["parse_failure"].get(err_type, 0)
             )
+        for fmt, fmt_stats in stats.get("formats", {}).items():
+            bucket = global_stats["formats"].setdefault(fmt, _init_format_bucket())
+            _merge_format_stats(bucket, fmt_stats)
 
     return file_stats, global_stats
 
@@ -270,19 +328,33 @@ def build_sankey_data(global_stats: Dict[str, Any]) -> Tuple[List[str], List[int
         targets.append(target)
         values.append(value)
 
-    all_idx = add_node("All Samples")
-    primary_success_idx = add_node("Primary Success")
-    primary_failure_idx = add_node("Primary Failure")
+    format_nodes: Dict[str, int] = {}
+    for fmt in FORMAT_ORDER:
+        bucket = global_stats.get("formats", {}).get(fmt)
+        if not bucket:
+            continue
+        if bucket.get("total", 0) <= 0:
+            continue
+        node_idx = add_node(FORMAT_LABELS[fmt])
+        format_nodes[fmt] = node_idx
+    primary_success_idx = add_node("Model Success")
+    primary_failure_idx = add_node("Model Failure")
     parse_nodes: Dict[str, int] = {}
     for err_type in sorted(global_stats.get("parse_counts", {})):
         parse_nodes[err_type] = add_node(f"Parse Error ({err_type})")
     overall_success_idx = add_node("Overall Success")
     overall_failure_idx = add_node("Overall Failure")
 
-    add_flow(all_idx, primary_success_idx, global_stats.get("primary_success", 0))
-    add_flow(all_idx, primary_failure_idx, global_stats.get("primary_failure", 0))
-    for err_type, node_idx in parse_nodes.items():
-        add_flow(all_idx, node_idx, global_stats["parse_counts"].get(err_type, 0))
+    for fmt, node_idx in format_nodes.items():
+        bucket = global_stats["formats"][fmt]
+        add_flow(node_idx, primary_success_idx, bucket.get("primary_success", 0))
+        add_flow(node_idx, primary_failure_idx, bucket.get("primary_failure", 0))
+        for err_type, count in bucket.get("parse_counts", {}).items():
+            parse_node_idx = parse_nodes.get(err_type)
+            if parse_node_idx is None:
+                parse_node_idx = add_node(f"Parse Error ({err_type})")
+                parse_nodes[err_type] = parse_node_idx
+            add_flow(node_idx, parse_node_idx, count)
 
     add_flow(primary_success_idx, overall_success_idx, global_stats.get("primary_success", 0))
     add_flow(primary_failure_idx, overall_failure_idx, global_stats.get("primary_failure", 0))
@@ -313,16 +385,24 @@ def print_stats(global_stats: Dict[str, Any], file_stats: List[Dict[str, Any]]) 
         print("No compatible traces found in the provided files.")
         return
 
+    for fmt in FORMAT_ORDER:
+        bucket = global_stats.get("formats", {}).get(fmt)
+        if not bucket or bucket.get("total", 0) == 0:
+            continue
+        label = FORMAT_LABELS[fmt]
+        fmt_total = bucket["total"]
+        print(f"{label}: {fmt_total} ({_pct(fmt_total, total)})")
+
     primary_success = global_stats.get("primary_success", 0)
     primary_failure = global_stats.get("primary_failure", 0)
     parse_total = sum(global_stats.get("parse_counts", {}).values())
 
     print(
-        f"Primary success: {primary_success} "
+        f"Model success: {primary_success} "
         f"({_pct(primary_success, total)})"
     )
     print(
-        f"Primary failure: {primary_failure} "
+        f"Model failure: {primary_failure} "
         f"({_pct(primary_failure, total)})"
     )
     print(
@@ -335,15 +415,25 @@ def print_stats(global_stats: Dict[str, Any], file_stats: List[Dict[str, Any]]) 
         print(
             f"  - {err_type}: {count} | success {ps}, failure {pf}"
         )
+    for fmt in FORMAT_ORDER:
+        bucket = global_stats.get("formats", {}).get(fmt)
+        if not bucket or bucket.get("total", 0) == 0:
+            continue
+        label = FORMAT_LABELS[fmt]
+        parse_total_fmt = sum(bucket.get("parse_counts", {}).values())
+        print(
+            f"{label} parse failures: {parse_total_fmt} "
+            f"({_pct(parse_total_fmt, bucket['total'])})"
+        )
 
     for stats in file_stats:
         print(f"\n[{stats['label']}] ({stats['total']} samples)")
         print(
-            f"  Primary success: {stats['primary_success']} "
+            f"  Model success: {stats['primary_success']} "
             f"({_pct(stats['primary_success'], stats['total'])})"
         )
         print(
-            f"  Primary failure: {stats['primary_failure']} "
+            f"  Model failure: {stats['primary_failure']} "
             f"({_pct(stats['primary_failure'], stats['total'])})"
         )
         parse_total_file = sum(stats["parse_counts"].values())
@@ -356,6 +446,15 @@ def print_stats(global_stats: Dict[str, Any], file_stats: List[Dict[str, Any]]) 
             pf = stats["parse_failure"].get(err_type, 0)
             print(
                 f"    - {err_type}: {count} | success {ps}, failure {pf}"
+            )
+        for fmt in FORMAT_ORDER:
+            bucket = stats.get("formats", {}).get(fmt)
+            if not bucket or bucket.get("total", 0) == 0:
+                continue
+            label = FORMAT_LABELS[fmt]
+            parse_total_fmt = sum(bucket.get("parse_counts", {}).values())
+            print(
+                f"    {label}: {bucket['total']} samples, parse failures {parse_total_fmt}"
             )
 
 

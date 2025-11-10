@@ -23,6 +23,7 @@ class FallbackModelOrchestrator(BaseOrchestrator):
         primary_llm,
         helper_env_path: Optional[str] = None,
         strip_code_fence: bool = True,
+        prompt_type: str = "json",
         **kwargs: Any,
     ) -> None:
         """
@@ -30,10 +31,19 @@ class FallbackModelOrchestrator(BaseOrchestrator):
             primary_llm: Locally running small language model (provides ``chat``).
             helper_env_path: Optional path to the Azure OpenAI credential file.
             strip_code_fence: Whether to remove ```json fences before parsing.
+            prompt_type: ``json`` enforces JSON-validation before returning the
+                primary response, ``str`` accepts arbitrary text.
             **kwargs: Forwarded to :class:`BaseOrchestrator`.
         """
         super().__init__(primary_llm, **kwargs)
         self.strip_code_fence = strip_code_fence
+        normalized_prompt_type = (prompt_type or "json").lower()
+        if normalized_prompt_type not in {"json", "str"}:
+            raise ValueError(
+                "prompt_type must be either 'json' or 'str', "
+                f"got '{prompt_type}'."
+            )
+        self.prompt_type = normalized_prompt_type
         self.helper = AzureOpenAIOrchestrator(env_path=helper_env_path)
 
     def completion(
@@ -58,7 +68,10 @@ class FallbackModelOrchestrator(BaseOrchestrator):
         for idx, (history, response_text) in enumerate(
             zip(histories, primary_responses)
         ):
-            normalized_text, parse_result = self._attempt_parse(response_text)
+            if self.prompt_type == "json":
+                normalized_text, parse_result = self._attempt_parse(response_text)
+            else:
+                normalized_text, parse_result = self._accept_text(response_text)
             parse_attempts.append(parse_result)
 
             final_text = (
@@ -154,6 +167,27 @@ class FallbackModelOrchestrator(BaseOrchestrator):
 
         result["ok"] = True
         result["normalized_text"] = normalized
+        return normalized, result
+
+    def _accept_text(self, response: Any) -> Tuple[str, Dict[str, Any]]:
+        """
+        Accept raw string responses (used when prompt_type == 'str').
+        """
+        if not isinstance(response, str):
+            normalized = str(response)
+        else:
+            normalized = response
+
+        normalized = normalized.strip()
+        if self.strip_code_fence and normalized.startswith("```"):
+            normalized = self._strip_code_fence(normalized)
+
+        result = {
+            "ok": True,
+            "normalized_text": normalized,
+            "validation_mode": "skipped_json",
+            "reason": "prompt_type=str",
+        }
         return normalized, result
 
     @staticmethod

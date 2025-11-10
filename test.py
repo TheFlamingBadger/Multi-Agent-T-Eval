@@ -166,6 +166,7 @@ if __name__ == '__main__':
                 orchestrator = FallbackModelOrchestrator(
                     base_orchestrator,
                     helper_env_path=args.azure_env_path,
+                    prompt_type=args.prompt_type,
                 )
         else:
             # Initialize LLM for non-Azure model types
@@ -201,6 +202,7 @@ if __name__ == '__main__':
                 orchestrator = FallbackModelOrchestrator(
                     llm,
                     helper_env_path=args.azure_env_path,
+                    prompt_type=args.prompt_type,
                 )
         
         print(f"Using {args.orchestrator} orchestrator")

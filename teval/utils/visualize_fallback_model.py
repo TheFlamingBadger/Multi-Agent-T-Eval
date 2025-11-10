@@ -35,6 +35,12 @@ JSON_ERROR_HINTS: List[Tuple[re.Pattern[str], str]] = [
     (re.compile(r"expecting value", re.IGNORECASE), "missing_value"),
 ]
 
+FORMAT_LABELS = {
+    "json": "JSON Samples",
+    "str": "String Samples",
+}
+FORMAT_ORDER = ["str", "json"]
+
 
 def _normalize_error_label(parts: List[Optional[str]]) -> Optional[str]:
     cleaned: List[str] = []
@@ -94,6 +100,37 @@ def _describe_parse_error(parse_attempt: Dict[str, Any]) -> str:
     return "unknown_error"
 
 
+def _init_format_bucket() -> Dict[str, Any]:
+    return {
+        "total": 0,
+        "primary_correct": 0,
+        "primary_incorrect": 0,
+        "parse_counts": {},
+        "secondary_correct": {},
+        "secondary_incorrect": {},
+    }
+
+
+def _merge_format_stats(dst: Dict[str, Any], src: Dict[str, Any]) -> None:
+    dst["total"] += src.get("total", 0)
+    dst["primary_correct"] += src.get("primary_correct", 0)
+    dst["primary_incorrect"] += src.get("primary_incorrect", 0)
+    for err_type, count in src.get("parse_counts", {}).items():
+        dst["parse_counts"][err_type] = dst["parse_counts"].get(err_type, 0) + count
+    for err_type, count in src.get("secondary_correct", {}).items():
+        dst["secondary_correct"][err_type] = dst["secondary_correct"].get(err_type, 0) + count
+    for err_type, count in src.get("secondary_incorrect", {}).items():
+        dst["secondary_incorrect"][err_type] = dst["secondary_incorrect"].get(err_type, 0) + count
+
+
+def _response_format(entry: Dict[str, Any]) -> str:
+    meta = entry.get("meta_data") or {}
+    fmt = str(meta.get("response_format", "json")).lower()
+    if fmt == "str":
+        return "str"
+    return "json"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Visualize FallbackModelOrchestrator results as a Sankey diagram."
@@ -146,22 +183,29 @@ def aggregate_counts(result_path: str, label: Optional[str] = None) -> Dict[str,
     secondary_correct: Dict[str, int] = {}
     secondary_incorrect: Dict[str, int] = {}
 
+    format_buckets: Dict[str, Dict[str, Any]] = {}
+
     for _, entry in _iter_samples(result_path):
         if not isinstance(entry, dict):
             continue
         trace = entry.get("orchestration_trace")
         if not isinstance(trace, dict) or trace.get("strategy") != "fallback_model":
             continue
+        fmt = _response_format(entry)
+        fmt_bucket = format_buckets.setdefault(fmt, _init_format_bucket())
 
         total += 1
+        fmt_bucket["total"] += 1
         fallback = trace.get("fallback_triggered", False)
         success = _is_success(entry)
 
         if not fallback:
             if success:
                 primary_correct += 1
+                fmt_bucket["primary_correct"] += 1
             else:
                 primary_incorrect += 1
+                fmt_bucket["primary_incorrect"] += 1
             continue
 
         parse_attempt = (
@@ -169,11 +213,14 @@ def aggregate_counts(result_path: str, label: Optional[str] = None) -> Dict[str,
         )
         err_type = _describe_parse_error(parse_attempt)
         parse_counts[err_type] = parse_counts.get(err_type, 0) + 1
+        fmt_bucket["parse_counts"][err_type] = fmt_bucket["parse_counts"].get(err_type, 0) + 1
 
         if success:
             secondary_correct[err_type] = secondary_correct.get(err_type, 0) + 1
+            fmt_bucket["secondary_correct"][err_type] = fmt_bucket["secondary_correct"].get(err_type, 0) + 1
         else:
             secondary_incorrect[err_type] = secondary_incorrect.get(err_type, 0) + 1
+            fmt_bucket["secondary_incorrect"][err_type] = fmt_bucket["secondary_incorrect"].get(err_type, 0) + 1
 
     return {
         "total": total,
@@ -184,6 +231,7 @@ def aggregate_counts(result_path: str, label: Optional[str] = None) -> Dict[str,
         "secondary_incorrect": secondary_incorrect,
         "file_path": result_path,
         "label": label or os.path.basename(result_path),
+        "formats": format_buckets,
     }
 
 
@@ -212,6 +260,7 @@ def aggregate_file_list(file_paths: List[str]) -> Tuple[List[Dict[str, Any]], Di
         "parse_counts": {},
         "secondary_correct": {},
         "secondary_incorrect": {},
+        "formats": {},
     }
 
     for file_path in file_paths:
@@ -234,6 +283,9 @@ def aggregate_file_list(file_paths: List[str]) -> Tuple[List[Dict[str, Any]], Di
                 global_stats["secondary_incorrect"].get(err_type, 0)
                 + stats["secondary_incorrect"].get(err_type, 0)
             )
+        for fmt, fmt_stats in stats.get("formats", {}).items():
+            bucket = global_stats["formats"].setdefault(fmt, _init_format_bucket())
+            _merge_format_stats(bucket, fmt_stats)
 
     return file_stats, global_stats
 
@@ -255,7 +307,15 @@ def build_sankey_data(global_stats: Dict[str, Any]) -> Tuple[List[str], List[int
         targets.append(target)
         values.append(value)
 
-    all_idx = add_node("All Samples")
+    format_nodes: Dict[str, int] = {}
+    for fmt in FORMAT_ORDER:
+        bucket = global_stats.get("formats", {}).get(fmt)
+        if not bucket:
+            continue
+        if bucket.get("total", 0) <= 0:
+            continue
+        node_idx = add_node(FORMAT_LABELS[fmt])
+        format_nodes[fmt] = node_idx
     primary_success_idx = add_node("Primary Success")
     primary_failure_idx = add_node("Primary Failure")
     parse_counts = global_stats.get("parse_counts", {})
@@ -269,10 +329,16 @@ def build_sankey_data(global_stats: Dict[str, Any]) -> Tuple[List[str], List[int
     primary_correct = global_stats.get("primary_correct", 0)
     primary_incorrect = global_stats.get("primary_incorrect", 0)
 
-    add_flow(all_idx, primary_success_idx, primary_correct)
-    add_flow(all_idx, primary_failure_idx, primary_incorrect)
-    for err_type, total in parse_counts.items():
-        add_flow(all_idx, parse_nodes[err_type], total)
+    for fmt, node_idx in format_nodes.items():
+        bucket = global_stats["formats"][fmt]
+        add_flow(node_idx, primary_success_idx, bucket.get("primary_correct", 0))
+        add_flow(node_idx, primary_failure_idx, bucket.get("primary_incorrect", 0))
+        for err_type, count in bucket.get("parse_counts", {}).items():
+            parse_node_idx = parse_nodes.get(err_type)
+            if parse_node_idx is None:
+                parse_node_idx = add_node(f"Primary Parse Error ({err_type})")
+                parse_nodes[err_type] = parse_node_idx
+            add_flow(node_idx, parse_node_idx, count)
 
     add_flow(primary_success_idx, overall_success_idx, primary_correct)
     add_flow(primary_failure_idx, overall_failure_idx, primary_incorrect)
@@ -331,6 +397,14 @@ def print_stats(global_stats: Dict[str, Any], file_stats: List[Dict[str, Any]]) 
         print("No fallback_model traces found in the provided files.")
         return
 
+    for fmt in FORMAT_ORDER:
+        bucket = global_stats.get("formats", {}).get(fmt)
+        if not bucket or bucket.get("total", 0) == 0:
+            continue
+        label = FORMAT_LABELS[fmt]
+        fmt_total = bucket["total"]
+        print(f"{label}: {fmt_total} ({_pct(fmt_total, total)})")
+
     print(
         f"Primary correct: {global_stats['primary_correct']} "
         f"({_pct(global_stats['primary_correct'], total)})"
@@ -347,6 +421,16 @@ def print_stats(global_stats: Dict[str, Any], file_stats: List[Dict[str, Any]]) 
         sec_fail = global_stats["secondary_incorrect"].get(err_type, 0)
         print(
             f"  - {err_type}: {count} | secondary correct: {sec_success}, secondary incorrect: {sec_fail}"
+        )
+    for fmt in FORMAT_ORDER:
+        bucket = global_stats.get("formats", {}).get(fmt)
+        if not bucket or bucket.get("total", 0) == 0:
+            continue
+        label = FORMAT_LABELS[fmt]
+        fmt_parse_total = sum(bucket.get("parse_counts", {}).values())
+        print(
+            f"{label} parse failures: {fmt_parse_total} "
+            f"({_pct(fmt_parse_total, bucket['total'])})"
         )
 
     for stats in file_stats:
@@ -372,6 +456,15 @@ def print_stats(global_stats: Dict[str, Any], file_stats: List[Dict[str, Any]]) 
             print(
                 f"    - {err_type}: {count} "
                 f"(secondary correct: {sec_success}, secondary incorrect: {sec_fail})"
+            )
+        for fmt in FORMAT_ORDER:
+            bucket = stats.get("formats", {}).get(fmt)
+            if not bucket or bucket.get("total", 0) == 0:
+                continue
+            label = FORMAT_LABELS[fmt]
+            fmt_parse_total = sum(bucket.get("parse_counts", {}).values())
+            print(
+                f"    {label}: {bucket['total']} samples, parse failures {fmt_parse_total}"
             )
 
 
