@@ -42,6 +42,7 @@ FORMAT_LABELS = {
     "str": "String Samples",
 }
 FORMAT_ORDER = ["str", "json"]
+PARSE_MISC_THRESHOLD = 20
 
 
 def parse_args() -> argparse.Namespace:
@@ -329,45 +330,105 @@ def build_sankey_data(global_stats: Dict[str, Any]) -> Tuple[List[str], List[int
         values.append(value)
 
     format_nodes: Dict[str, int] = {}
+    formats_data = global_stats.get("formats", {})
     for fmt in FORMAT_ORDER:
-        bucket = global_stats.get("formats", {}).get(fmt)
+        bucket = formats_data.get(fmt)
         if not bucket:
             continue
         if bucket.get("total", 0) <= 0:
             continue
         node_idx = add_node(FORMAT_LABELS[fmt])
         format_nodes[fmt] = node_idx
-    primary_success_idx = add_node("Model Success")
-    primary_failure_idx = add_node("Model Failure")
-    parse_nodes: Dict[str, int] = {}
-    for err_type in sorted(global_stats.get("parse_counts", {})):
-        parse_nodes[err_type] = add_node(f"Parse Error ({err_type})")
-    overall_success_idx = add_node("Overall Success")
-    overall_failure_idx = add_node("Overall Failure")
+
+    parse_counts = global_stats.get("parse_counts", {})
+    major_labels = sorted(
+        [label for label, count in parse_counts.items() if count >= PARSE_MISC_THRESHOLD]
+    )
+    major_label_set = set(major_labels)
+    minor_labels = sorted(label for label in parse_counts if label not in major_label_set)
+
+    parse_success_total = 0
+    parse_success_success_total = 0
+    parse_success_failure_total = 0
+    no_parse_total = 0
+    no_parse_success_total = 0
+    no_parse_failure_total = 0
+    for fmt, bucket in formats_data.items():
+        parse_ok = bucket.get("primary_success", 0) + bucket.get("primary_failure", 0)
+        if fmt == "str":
+            no_parse_total += parse_ok
+            no_parse_success_total += bucket.get("primary_success", 0)
+            no_parse_failure_total += bucket.get("primary_failure", 0)
+        else:
+            parse_success_total += parse_ok
+            parse_success_success_total += bucket.get("primary_success", 0)
+            parse_success_failure_total += bucket.get("primary_failure", 0)
+
+    parse_success_node_idx: Optional[int] = None
+    if parse_success_total > 0:
+        parse_success_node_idx = add_node("Parse Success")
+    no_parse_node_idx: Optional[int] = None
+    if no_parse_total > 0:
+        no_parse_node_idx = add_node("No Parse")
+
+    parse_error_nodes: Dict[str, int] = {}
+    for label in major_labels:
+        parse_error_nodes[label] = add_node(f"Parse Error ({label})")
+
+    misc_total = sum(parse_counts.get(label, 0) for label in minor_labels)
+    misc_node_idx: Optional[int] = None
+    if misc_total > 0:
+        misc_node_idx = add_node("Parse Errors (Misc. Aggr.)")
+
+    overall_success_idx = add_node("Success")
+    overall_failure_idx = add_node("Failure")
 
     for fmt, node_idx in format_nodes.items():
-        bucket = global_stats["formats"][fmt]
-        add_flow(node_idx, primary_success_idx, bucket.get("primary_success", 0))
-        add_flow(node_idx, primary_failure_idx, bucket.get("primary_failure", 0))
-        for err_type, count in bucket.get("parse_counts", {}).items():
-            parse_node_idx = parse_nodes.get(err_type)
-            if parse_node_idx is None:
-                parse_node_idx = add_node(f"Parse Error ({err_type})")
-                parse_nodes[err_type] = parse_node_idx
-            add_flow(node_idx, parse_node_idx, count)
+        bucket = formats_data[fmt]
+        parse_success_count = bucket.get("primary_success", 0) + bucket.get("primary_failure", 0)
+        if fmt == "str":
+            if no_parse_node_idx is not None and parse_success_count > 0:
+                add_flow(node_idx, no_parse_node_idx, parse_success_count)
+        else:
+            if parse_success_node_idx is not None and parse_success_count > 0:
+                add_flow(node_idx, parse_success_node_idx, parse_success_count)
 
-    add_flow(primary_success_idx, overall_success_idx, global_stats.get("primary_success", 0))
-    add_flow(primary_failure_idx, overall_failure_idx, global_stats.get("primary_failure", 0))
+        for label in major_labels:
+            count = bucket.get("parse_counts", {}).get(label, 0)
+            if count > 0:
+                add_flow(node_idx, parse_error_nodes[label], count)
 
-    for err_type, node_idx in parse_nodes.items():
-        succ = global_stats["parse_success"].get(err_type, 0)
-        fail = global_stats["parse_failure"].get(err_type, 0)
+        if misc_node_idx is not None:
+            agg_count = sum(
+                count
+                for label, count in bucket.get("parse_counts", {}).items()
+                if label not in major_label_set
+            )
+            if agg_count > 0:
+                add_flow(node_idx, misc_node_idx, agg_count)
+
+    if parse_success_node_idx is not None:
+        add_flow(parse_success_node_idx, overall_success_idx, parse_success_success_total)
+        add_flow(parse_success_node_idx, overall_failure_idx, parse_success_failure_total)
+
+    if no_parse_node_idx is not None:
+        add_flow(no_parse_node_idx, overall_success_idx, no_parse_success_total)
+        add_flow(no_parse_node_idx, overall_failure_idx, no_parse_failure_total)
+
+    for label in major_labels:
+        node_idx = parse_error_nodes[label]
+        succ = global_stats["parse_success"].get(label, 0)
+        fail = global_stats["parse_failure"].get(label, 0)
         add_flow(node_idx, overall_success_idx, succ)
-        add_flow(node_idx, overall_failure_idx, fail)
-        total = global_stats["parse_counts"].get(err_type, 0)
-        remainder = total - (succ + fail)
-        if remainder > 0:
-            add_flow(node_idx, overall_failure_idx, remainder)
+        remainder = parse_counts.get(label, 0) - (succ + fail)
+        add_flow(node_idx, overall_failure_idx, fail + max(remainder, 0))
+
+    if misc_node_idx is not None:
+        misc_success = sum(global_stats["parse_success"].get(label, 0) for label in minor_labels)
+        misc_failure = sum(global_stats["parse_failure"].get(label, 0) for label in minor_labels)
+        misc_remainder = misc_total - (misc_success + misc_failure)
+        add_flow(misc_node_idx, overall_success_idx, misc_success)
+        add_flow(misc_node_idx, overall_failure_idx, misc_failure + max(misc_remainder, 0))
 
     return node_labels, sources, targets, values
 

@@ -40,7 +40,7 @@ FORMAT_LABELS = {
     "str": "String Samples",
 }
 FORMAT_ORDER = ["str", "json"]
-
+PARSE_MISC_THRESHOLD = 20
 
 def _normalize_error_label(parts: List[Optional[str]]) -> Optional[str]:
     cleaned: List[str] = []
@@ -307,79 +307,117 @@ def build_sankey_data(global_stats: Dict[str, Any]) -> Tuple[List[str], List[int
         targets.append(target)
         values.append(value)
 
+    formats_data = global_stats.get("formats", {})
     format_nodes: Dict[str, int] = {}
     for fmt in FORMAT_ORDER:
-        bucket = global_stats.get("formats", {}).get(fmt)
-        if not bucket:
+        bucket = formats_data.get(fmt)
+        if not bucket or bucket.get("total", 0) <= 0:
             continue
-        if bucket.get("total", 0) <= 0:
-            continue
-        node_idx = add_node(FORMAT_LABELS[fmt])
-        format_nodes[fmt] = node_idx
-    primary_success_idx = add_node("Primary Success")
-    primary_failure_idx = add_node("Primary Failure")
+        format_nodes[fmt] = add_node(FORMAT_LABELS[fmt])
+
     parse_counts = global_stats.get("parse_counts", {})
-    parse_nodes: Dict[str, int] = {}
-    for err_type, total in parse_counts.items():
-        label = f"Primary Parse Error ({err_type})"
-        parse_nodes[err_type] = add_node(label)
-    overall_success_idx = add_node("Overall Success")
-    overall_failure_idx = add_node("Overall Failure")
+    major_labels = sorted(
+        [label for label, count in parse_counts.items() if count >= PARSE_MISC_THRESHOLD]
+    )
+    major_label_set = set(major_labels)
+    minor_labels = sorted(label for label in parse_counts if label not in major_label_set)
 
-    primary_correct = global_stats.get("primary_correct", 0)
-    primary_incorrect = global_stats.get("primary_incorrect", 0)
+    primary_parse_success_idx: Optional[int] = None
+    primary_no_parse_idx: Optional[int] = None
+    primary_error_nodes: Dict[str, int] = {}
+    primary_misc_idx: Optional[int] = None
 
-    for fmt, node_idx in format_nodes.items():
-        bucket = global_stats["formats"][fmt]
-        add_flow(node_idx, primary_success_idx, bucket.get("primary_correct", 0))
-        add_flow(node_idx, primary_failure_idx, bucket.get("primary_incorrect", 0))
+    def ensure_primary_parse_success_node() -> int:
+        nonlocal primary_parse_success_idx
+        if primary_parse_success_idx is None:
+            primary_parse_success_idx = add_node("Primary Parse Success")
+        return primary_parse_success_idx
+
+    def ensure_primary_no_parse_node() -> int:
+        nonlocal primary_no_parse_idx
+        if primary_no_parse_idx is None:
+            primary_no_parse_idx = add_node("Primary No Parse")
+        return primary_no_parse_idx
+
+    def ensure_primary_error_node(label: str) -> int:
+        if label not in primary_error_nodes:
+            primary_error_nodes[label] = add_node(f"Primary Parse Error ({label})")
+        return primary_error_nodes[label]
+
+    def ensure_primary_misc_node() -> int:
+        nonlocal primary_misc_idx
+        if primary_misc_idx is None:
+            primary_misc_idx = add_node("Primary Parse Errors (Misc. Aggr.)")
+        return primary_misc_idx
+
+    primary_parse_success_correct_total = 0
+    primary_parse_success_incorrect_total = 0
+    primary_no_parse_correct_total = 0
+    primary_no_parse_incorrect_total = 0
+
+    for fmt, format_node_idx in format_nodes.items():
+        bucket = formats_data[fmt]
+        primary_ok = bucket.get("primary_correct", 0) + bucket.get("primary_incorrect", 0)
+        if primary_ok > 0:
+            if fmt == "str":
+                target_idx = ensure_primary_no_parse_node()
+                primary_no_parse_correct_total += bucket.get("primary_correct", 0)
+                primary_no_parse_incorrect_total += bucket.get("primary_incorrect", 0)
+            else:
+                target_idx = ensure_primary_parse_success_node()
+                primary_parse_success_correct_total += bucket.get("primary_correct", 0)
+                primary_parse_success_incorrect_total += bucket.get("primary_incorrect", 0)
+            add_flow(format_node_idx, target_idx, primary_ok)
+
+        misc_total = 0
         for err_type, count in bucket.get("parse_counts", {}).items():
-            parse_node_idx = parse_nodes.get(err_type)
-            if parse_node_idx is None:
-                parse_node_idx = add_node(f"Primary Parse Error ({err_type})")
-                parse_nodes[err_type] = parse_node_idx
-            add_flow(node_idx, parse_node_idx, count)
+            if err_type in major_label_set:
+                error_node_idx = ensure_primary_error_node(err_type)
+                add_flow(format_node_idx, error_node_idx, count)
+            else:
+                misc_total += count
+        if misc_total > 0:
+            misc_idx = ensure_primary_misc_node()
+            add_flow(format_node_idx, misc_idx, misc_total)
 
-    add_flow(primary_success_idx, overall_success_idx, primary_correct)
-    add_flow(primary_failure_idx, overall_failure_idx, primary_incorrect)
+    secondary_parse_success_idx: Optional[int] = None
+    fallback_total = sum(parse_counts.values())
+    if fallback_total > 0:
+        secondary_parse_success_idx = add_node("Secondary Parse Success")
 
-    secondary_success_idx: Optional[int] = None
-    secondary_failure_idx: Optional[int] = None
-    secondary_unknown_idx: Optional[int] = None
-    secondary_success_total = 0
-    secondary_failure_total = 0
-    secondary_unknown_total = 0
+    for label in major_labels:
+        error_node_idx = primary_error_nodes.get(label)
+        if error_node_idx is None or secondary_parse_success_idx is None:
+            continue
+        add_flow(error_node_idx, secondary_parse_success_idx, parse_counts.get(label, 0))
 
-    for err_type, total in parse_counts.items():
-        sec_success = global_stats.get("secondary_correct", {}).get(err_type, 0)
-        sec_failure = global_stats.get("secondary_incorrect", {}).get(err_type, 0)
+    misc_total = sum(parse_counts.get(label, 0) for label in minor_labels)
+    if primary_misc_idx is not None and secondary_parse_success_idx is not None and misc_total > 0:
+        add_flow(primary_misc_idx, secondary_parse_success_idx, misc_total)
 
-        parse_node_idx = parse_nodes[err_type]
-        if sec_success:
-            if secondary_success_idx is None:
-                secondary_success_idx = add_node("Secondary Success")
-            add_flow(parse_node_idx, secondary_success_idx, sec_success)
-            secondary_success_total += sec_success
+    overall_success_idx = add_node("Success")
+    overall_failure_idx = add_node("Failure")
 
-        if sec_failure:
-            if secondary_failure_idx is None:
-                secondary_failure_idx = add_node("Secondary Failure")
-            add_flow(parse_node_idx, secondary_failure_idx, sec_failure)
-            secondary_failure_total += sec_failure
+    if primary_parse_success_idx is not None:
+        add_flow(primary_parse_success_idx, overall_success_idx, primary_parse_success_correct_total)
+        add_flow(primary_parse_success_idx, overall_failure_idx, primary_parse_success_incorrect_total)
+    if primary_no_parse_idx is not None:
+        add_flow(primary_no_parse_idx, overall_success_idx, primary_no_parse_correct_total)
+        add_flow(primary_no_parse_idx, overall_failure_idx, primary_no_parse_incorrect_total)
 
-        unaccounted = total - (sec_success + sec_failure)
-        if unaccounted > 0:
-            if secondary_unknown_idx is None:
-                secondary_unknown_idx = add_node("Secondary Unknown")
-            add_flow(parse_node_idx, secondary_unknown_idx, unaccounted)
-            secondary_unknown_total += unaccounted
-
-    if secondary_success_idx is not None and secondary_success_total > 0:
-        add_flow(secondary_success_idx, overall_success_idx, secondary_success_total)
-    if secondary_failure_idx is not None and secondary_failure_total > 0:
-        add_flow(secondary_failure_idx, overall_failure_idx, secondary_failure_total)
-    if secondary_unknown_idx is not None and secondary_unknown_total > 0:
-        add_flow(secondary_unknown_idx, overall_failure_idx, secondary_unknown_total)
+    secondary_correct = global_stats.get("secondary_correct", {})
+    secondary_incorrect = global_stats.get("secondary_incorrect", {})
+    secondary_unknown_total = sum(
+        max(parse_counts.get(label, 0) - (secondary_correct.get(label, 0) + secondary_incorrect.get(label, 0)), 0)
+        for label in parse_counts
+    )
+    if secondary_parse_success_idx is not None:
+        add_flow(secondary_parse_success_idx, overall_success_idx, sum(secondary_correct.values()))
+        add_flow(
+            secondary_parse_success_idx,
+            overall_failure_idx,
+            sum(secondary_incorrect.values()) + secondary_unknown_total,
+        )
 
     return node_labels, sources, targets, values
 
