@@ -267,18 +267,21 @@ def build_sankey_data(global_stats: Dict[str, Any]) -> Tuple[List[str], List[int
     all_idx = add_node("All Samples")
     primary_success_idx = add_node("Primary Success")
     primary_failure_idx = add_node("Primary Failure")
-    primary_parse_idx = add_node("Primary Parse Failure")
+    parse_counts = global_stats.get("parse_counts", {})
+    parse_nodes: Dict[str, int] = {}
+    for err_type, total in parse_counts.items():
+        label = f"Primary Parse ({err_type})"
+        parse_nodes[err_type] = add_node(label)
     overall_success_idx = add_node("Overall Success")
     overall_failure_idx = add_node("Overall Failure")
 
     primary_correct = global_stats.get("primary_correct", 0)
     primary_incorrect = global_stats.get("primary_incorrect", 0)
-    parse_counts = global_stats.get("parse_counts", {})
-    fallback_total = sum(parse_counts.values())
 
     add_flow(all_idx, primary_success_idx, primary_correct)
     add_flow(all_idx, primary_failure_idx, primary_incorrect)
-    add_flow(all_idx, primary_parse_idx, fallback_total)
+    for err_type, total in parse_counts.items():
+        add_flow(all_idx, parse_nodes[err_type], total)
 
     add_flow(primary_success_idx, overall_success_idx, primary_correct)
     add_flow(primary_failure_idx, overall_failure_idx, primary_incorrect)
@@ -287,20 +290,21 @@ def build_sankey_data(global_stats: Dict[str, Any]) -> Tuple[List[str], List[int
         sec_success = global_stats.get("secondary_correct", {}).get(err_type, 0)
         sec_failure = global_stats.get("secondary_incorrect", {}).get(err_type, 0)
 
+        parse_node_idx = parse_nodes[err_type]
         if sec_success:
             succ_idx = add_node(f"Secondary Success ({err_type})")
-            add_flow(primary_parse_idx, succ_idx, sec_success)
+            add_flow(parse_node_idx, succ_idx, sec_success)
             add_flow(succ_idx, overall_success_idx, sec_success)
 
         if sec_failure:
             fail_idx = add_node(f"Secondary Failure ({err_type})")
-            add_flow(primary_parse_idx, fail_idx, sec_failure)
+            add_flow(parse_node_idx, fail_idx, sec_failure)
             add_flow(fail_idx, overall_failure_idx, sec_failure)
 
         unaccounted = total - (sec_success + sec_failure)
         if unaccounted > 0:
             unknown_idx = add_node(f"Secondary Unknown ({err_type})")
-            add_flow(primary_parse_idx, unknown_idx, unaccounted)
+            add_flow(parse_node_idx, unknown_idx, unaccounted)
             add_flow(unknown_idx, overall_failure_idx, unaccounted)
 
     return node_labels, sources, targets, values
