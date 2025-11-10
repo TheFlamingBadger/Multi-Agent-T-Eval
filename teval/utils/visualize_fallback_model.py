@@ -30,6 +30,7 @@ JSON_ERROR_HINTS: List[Tuple[re.Pattern[str], str]] = [
     (re.compile(r"extra data", re.IGNORECASE), "extra_data"),
     (re.compile(r"unterminated string", re.IGNORECASE), "unterminated_string"),
     (re.compile(r"invalid control character", re.IGNORECASE), "invalid_control_char"),
+    (re.compile(r"invalid\s+\\escape", re.IGNORECASE), "invalid_escape"),
     (re.compile(r"invalid escape", re.IGNORECASE), "invalid_escape"),
     (re.compile(r"expecting value", re.IGNORECASE), "missing_value"),
 ]
@@ -107,10 +108,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--title",
         type=str,
-        default="Json Fallback Flow",
-        help="Optional diagram title.",
+        default=None,
+        help="Optional diagram title. Defaults to the parent directory name of the result path.",
     )
     return parser.parse_args()
+
+
+def _infer_directory_title(path: str) -> str:
+    directory = os.path.dirname(os.path.abspath(path))
+    base = os.path.basename(directory)
+    if base:
+        return base
+    fallback = os.path.basename(os.path.abspath(path))
+    return fallback or directory or ""
 
 
 def _iter_samples(result_path: str):
@@ -251,7 +261,7 @@ def build_sankey_data(global_stats: Dict[str, Any]) -> Tuple[List[str], List[int
     parse_counts = global_stats.get("parse_counts", {})
     parse_nodes: Dict[str, int] = {}
     for err_type, total in parse_counts.items():
-        label = f"Primary Parse ({err_type})"
+        label = f"Primary Parse Error ({err_type})"
         parse_nodes[err_type] = add_node(label)
     overall_success_idx = add_node("Overall Success")
     overall_failure_idx = add_node("Overall Failure")
@@ -267,26 +277,43 @@ def build_sankey_data(global_stats: Dict[str, Any]) -> Tuple[List[str], List[int
     add_flow(primary_success_idx, overall_success_idx, primary_correct)
     add_flow(primary_failure_idx, overall_failure_idx, primary_incorrect)
 
+    secondary_success_idx: Optional[int] = None
+    secondary_failure_idx: Optional[int] = None
+    secondary_unknown_idx: Optional[int] = None
+    secondary_success_total = 0
+    secondary_failure_total = 0
+    secondary_unknown_total = 0
+
     for err_type, total in parse_counts.items():
         sec_success = global_stats.get("secondary_correct", {}).get(err_type, 0)
         sec_failure = global_stats.get("secondary_incorrect", {}).get(err_type, 0)
 
         parse_node_idx = parse_nodes[err_type]
         if sec_success:
-            succ_idx = add_node(f"Secondary Success ({err_type})")
-            add_flow(parse_node_idx, succ_idx, sec_success)
-            add_flow(succ_idx, overall_success_idx, sec_success)
+            if secondary_success_idx is None:
+                secondary_success_idx = add_node("Secondary Success")
+            add_flow(parse_node_idx, secondary_success_idx, sec_success)
+            secondary_success_total += sec_success
 
         if sec_failure:
-            fail_idx = add_node(f"Secondary Failure ({err_type})")
-            add_flow(parse_node_idx, fail_idx, sec_failure)
-            add_flow(fail_idx, overall_failure_idx, sec_failure)
+            if secondary_failure_idx is None:
+                secondary_failure_idx = add_node("Secondary Failure")
+            add_flow(parse_node_idx, secondary_failure_idx, sec_failure)
+            secondary_failure_total += sec_failure
 
         unaccounted = total - (sec_success + sec_failure)
         if unaccounted > 0:
-            unknown_idx = add_node(f"Secondary Unknown ({err_type})")
-            add_flow(parse_node_idx, unknown_idx, unaccounted)
-            add_flow(unknown_idx, overall_failure_idx, unaccounted)
+            if secondary_unknown_idx is None:
+                secondary_unknown_idx = add_node("Secondary Unknown")
+            add_flow(parse_node_idx, secondary_unknown_idx, unaccounted)
+            secondary_unknown_total += unaccounted
+
+    if secondary_success_idx is not None and secondary_success_total > 0:
+        add_flow(secondary_success_idx, overall_success_idx, secondary_success_total)
+    if secondary_failure_idx is not None and secondary_failure_total > 0:
+        add_flow(secondary_failure_idx, overall_failure_idx, secondary_failure_total)
+    if secondary_unknown_idx is not None and secondary_unknown_total > 0:
+        add_flow(secondary_unknown_idx, overall_failure_idx, secondary_unknown_total)
 
     return node_labels, sources, targets, values
 
@@ -382,7 +409,8 @@ def main():
             link=dict(source=sources, target=targets, value=values),
         )
     )
-    fig.update_layout(title_text=args.title, font=dict(size=12))
+    title_text = args.title or _infer_directory_title(args.result_path)
+    fig.update_layout(title_text=title_text, font=dict(size=12))
 
     auto_html_path = os.path.splitext(args.result_path)[0] + ".html"
     fig.write_html(auto_html_path)
