@@ -349,7 +349,7 @@ Azure OpenAI charges based on:
 2. ✅ Run a small test (--test_num 10)
 3. ✅ Verify results
 4. Run full benchmark
-5. Compare with other orchestrators (thinking, multi_model)
+5. Compare with other orchestrators (thinking, react, reasoning_tool, fallback_model)
 6. Analyze results using `teval/utils/convert_results.py`
 
 ## Support

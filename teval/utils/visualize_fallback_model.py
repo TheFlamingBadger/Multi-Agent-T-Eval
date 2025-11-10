@@ -1,7 +1,7 @@
 import argparse
 import os
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import mmengine
 
@@ -9,7 +9,7 @@ try:
     import plotly.graph_objects as go
 except ImportError as exc:  # pragma: no cover - plotly optional
     raise ImportError(
-        "plotly is required for visualize_json_fallback.py. "
+        "plotly is required for visualize_fallback_model.py. "
         "Install it with `pip install plotly kaleido`."
     ) from exc
 
@@ -93,25 +93,9 @@ def _describe_parse_error(parse_attempt: Dict[str, Any]) -> str:
     return "unknown_error"
 
 
-def _shorten_dataset_label(label: str, existing: Set[str]) -> str:
-    stem = os.path.splitext(os.path.basename(label))[0]
-    parts = [part for part in stem.split("_") if part]
-    if len(parts) >= 2:
-        short = "_".join(parts[:2])
-    else:
-        short = stem
-
-    candidate = short
-    counter = 2
-    while candidate in existing:
-        candidate = f"{short}_{counter}"
-        counter += 1
-    return candidate
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Visualize JsonFallbackOrchestrator results as a Sankey diagram."
+        description="Visualize FallbackModelOrchestrator results as a Sankey diagram."
     )
     parser.add_argument(
         "--result_path",
@@ -175,7 +159,7 @@ def aggregate_counts(result_path: str, label: Optional[str] = None) -> Dict[str,
         if not isinstance(entry, dict):
             continue
         trace = entry.get("orchestration_trace")
-        if not isinstance(trace, dict) or trace.get("strategy") != "json_fallback":
+        if not isinstance(trace, dict) or trace.get("strategy") != "fallback_model":
             continue
 
         total += 1
@@ -263,71 +247,61 @@ def aggregate_file_list(file_paths: List[str]) -> Tuple[List[Dict[str, Any]], Di
     return file_stats, global_stats
 
 
-def build_sankey_data(
-    file_stats: List[Dict[str, Any]],
-    global_stats: Dict[str, Any],
-) -> Tuple[List[str], List[int], List[int], List[int]]:
-    node_labels = ["All Samples"]
+def build_sankey_data(global_stats: Dict[str, Any]) -> Tuple[List[str], List[int], List[int], List[int]]:
+    node_labels: List[str] = []
     sources: List[int] = []
     targets: List[int] = []
     values: List[int] = []
 
-    dataset_indices: Dict[str, int] = {}
-    used_dataset_labels: Set[str] = {"All Samples"}
-    for stats in file_stats:
-        node_idx = len(node_labels)
-        dataset_indices[stats["label"]] = node_idx
-        display_label = _shorten_dataset_label(stats["label"], used_dataset_labels)
-        node_labels.append(display_label)
-        used_dataset_labels.add(display_label)
-        sources.append(0)
-        targets.append(node_idx)
-        values.append(stats["total"])
+    def add_node(label: str) -> int:
+        node_labels.append(label)
+        return len(node_labels) - 1
 
-    primary_correct_idx = len(node_labels)
-    node_labels.append("Primary Correct")
-    primary_incorrect_idx = len(node_labels)
-    node_labels.append("Primary Incorrect")
+    def add_flow(source: int, target: int, value: int) -> None:
+        if value <= 0:
+            return
+        sources.append(source)
+        targets.append(target)
+        values.append(value)
 
-    parse_node_indices: Dict[str, int] = {}
-    for stats in file_stats:
-        dataset_idx = dataset_indices[stats["label"]]
-        if stats["primary_correct"]:
-            sources.append(dataset_idx)
-            targets.append(primary_correct_idx)
-            values.append(stats["primary_correct"])
-        if stats["primary_incorrect"]:
-            sources.append(dataset_idx)
-            targets.append(primary_incorrect_idx)
-            values.append(stats["primary_incorrect"])
-        for err_type, count in stats["parse_counts"].items():
-            if err_type not in parse_node_indices:
-                node_idx = len(node_labels)
-                node_labels.append(f"Parse Error: {err_type}")
-                parse_node_indices[err_type] = node_idx
-            sources.append(dataset_idx)
-            targets.append(parse_node_indices[err_type])
-            values.append(count)
+    all_idx = add_node("All Samples")
+    primary_success_idx = add_node("Primary Success")
+    primary_failure_idx = add_node("Primary Failure")
+    primary_parse_idx = add_node("Primary Parse Failure")
+    overall_success_idx = add_node("Overall Success")
+    overall_failure_idx = add_node("Overall Failure")
 
-    secondary_correct_idx: Optional[int] = None
-    secondary_incorrect_idx: Optional[int] = None
-    if parse_node_indices:
-        secondary_correct_idx = len(node_labels)
-        node_labels.append("Secondary Correct")
-        secondary_incorrect_idx = len(node_labels)
-        node_labels.append("Secondary Incorrect")
+    primary_correct = global_stats.get("primary_correct", 0)
+    primary_incorrect = global_stats.get("primary_incorrect", 0)
+    parse_counts = global_stats.get("parse_counts", {})
+    fallback_total = sum(parse_counts.values())
 
-    for err_type, node_idx in parse_node_indices.items():
-        sec_correct = global_stats["secondary_correct"].get(err_type, 0)
-        sec_incorrect = global_stats["secondary_incorrect"].get(err_type, 0)
-        if sec_correct and secondary_correct_idx is not None:
-            sources.append(node_idx)
-            targets.append(secondary_correct_idx)
-            values.append(sec_correct)
-        if sec_incorrect and secondary_incorrect_idx is not None:
-            sources.append(node_idx)
-            targets.append(secondary_incorrect_idx)
-            values.append(sec_incorrect)
+    add_flow(all_idx, primary_success_idx, primary_correct)
+    add_flow(all_idx, primary_failure_idx, primary_incorrect)
+    add_flow(all_idx, primary_parse_idx, fallback_total)
+
+    add_flow(primary_success_idx, overall_success_idx, primary_correct)
+    add_flow(primary_failure_idx, overall_failure_idx, primary_incorrect)
+
+    for err_type, total in parse_counts.items():
+        sec_success = global_stats.get("secondary_correct", {}).get(err_type, 0)
+        sec_failure = global_stats.get("secondary_incorrect", {}).get(err_type, 0)
+
+        if sec_success:
+            succ_idx = add_node(f"Secondary Success ({err_type})")
+            add_flow(primary_parse_idx, succ_idx, sec_success)
+            add_flow(succ_idx, overall_success_idx, sec_success)
+
+        if sec_failure:
+            fail_idx = add_node(f"Secondary Failure ({err_type})")
+            add_flow(primary_parse_idx, fail_idx, sec_failure)
+            add_flow(fail_idx, overall_failure_idx, sec_failure)
+
+        unaccounted = total - (sec_success + sec_failure)
+        if unaccounted > 0:
+            unknown_idx = add_node(f"Secondary Unknown ({err_type})")
+            add_flow(primary_parse_idx, unknown_idx, unaccounted)
+            add_flow(unknown_idx, overall_failure_idx, unaccounted)
 
     return node_labels, sources, targets, values
 
@@ -342,7 +316,7 @@ def print_stats(global_stats: Dict[str, Any], file_stats: List[Dict[str, Any]]) 
     total = global_stats["total"]
     print(f"Total samples: {total}")
     if total == 0:
-        print("No JsonFallback traces found in the provided files.")
+        print("No fallback_model traces found in the provided files.")
         return
 
     print(
@@ -410,12 +384,12 @@ def main():
     file_stats, global_stats = aggregate_file_list(file_paths)
     if not file_stats or global_stats["total"] == 0:
         raise ValueError(
-            "No JsonFallback traces found in the specified files. "
-            "Verify that the orchestrator was JsonFallback for these results."
+            "No fallback_model traces found in the specified files. "
+            "Verify that the orchestrator was FallbackModel for these results."
         )
 
     print_stats(global_stats, file_stats)
-    node_labels, sources, targets, values = build_sankey_data(file_stats, global_stats)
+    node_labels, sources, targets, values = build_sankey_data(global_stats)
 
     fig = go.Figure(
         go.Sankey(
@@ -432,7 +406,7 @@ def main():
             stem = os.path.splitext(os.path.basename(result_path))[0]
             output_path = os.path.join(
                 os.path.dirname(result_path),
-                f"{stem}_json_fallback.{args.download_format}",
+                f"{stem}_fallback_model.{args.download_format}",
             )
         if args.download_format == "html":
             if not output_path.lower().endswith(".html"):

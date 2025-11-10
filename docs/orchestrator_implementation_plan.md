@@ -21,7 +21,6 @@ teval/orchestrators/
 ├── base.py                  # Abstract base class (BaseOrchestrator)
 ├── direct.py                # Baseline - no orchestration
 ├── thinking_tokens.py       # Chain-of-thought reasoning
-├── multi_model.py           # Multi-model routing/ensemble
 ├── react.py                 # ReAct-style reasoning + acting
 └── reasoning_tool.py        # Primary + Azure helper delegation
 ```
@@ -113,62 +112,7 @@ orchestrator = ThinkingTokensOrchestrator(
 responses = orchestrator.completion(messages, do_sample=False)
 ```
 
-### 4. MultiModelOrchestrator
-
-**Location**: `teval/orchestrators/multi_model.py`
-
-**Purpose**: Enables routing queries to different models or using multiple models in sequence/ensemble.
-
-**Parameters**:
-- `primary_llm`: The primary/default language model
-- `secondary_llms` (Dict[str, model]): Additional models keyed by name
-- `routing_fn` (Callable): Function to select model for each query
-- `strategy` (str): One of `'routing'`, `'sequential'`, `'ensemble'`
-- `ensemble_selection` (str): For ensemble - `'first'`, `'longest'`, `'shortest'`
-
-**Strategies**:
-
-#### Routing Strategy
-Route each query to appropriate model based on routing function.
-
-```python
-def router(history):
-    if len(history[-1]['content']) > 500:
-        return 'strong_model'
-    return 'primary'
-
-orchestrator = MultiModelOrchestrator(
-    primary_llm=base_model,
-    secondary_llms={'strong_model': gpt4},
-    routing_fn=router,
-    strategy='routing'
-)
-```
-
-#### Sequential Strategy
-Use primary model for reasoning, secondary for final response.
-
-```python
-orchestrator = MultiModelOrchestrator(
-    primary_llm=reasoning_model,
-    secondary_llms={'final': fast_model},
-    strategy='sequential'
-)
-```
-
-#### Ensemble Strategy
-Generate from multiple models and select best response.
-
-```python
-    orchestrator = MultiModelOrchestrator(
-        primary_llm=model1,
-        secondary_llms={'model2': model2, 'model3': model3},
-        strategy='ensemble',
-        ensemble_selection='longest'
-    )
-```
-
-### 5. ReActOrchestrator
+### 4. ReActOrchestrator
 
 **Location**: `teval/orchestrators/react.py`
 
@@ -203,7 +147,7 @@ responses = orchestrator.completion(messages, temperature=0.0)
 # orchestrator.last_trace[0]['steps'][0]['reasoning_trace'] contains the ReAct thoughts/actions.
 ```
 
-### 6. ReasoningAsToolOrchestrator
+### 5. ReasoningAsToolOrchestrator
 
 **Location**: `teval/orchestrators/reasoning_tool.py`
 
@@ -245,7 +189,6 @@ answer = orchestrator.completion(messages)[0]
 from teval.orchestrators import (
     DirectOrchestrator,
     ThinkingTokensOrchestrator,
-    MultiModelOrchestrator,
     ReActOrchestrator,
     ReasoningAsToolOrchestrator,
 )
@@ -253,7 +196,7 @@ from teval.orchestrators import (
 
 **2. New Command-Line Arguments**:
 ```bash
---orchestrator {direct,thinking,multi_model,react,reasoning_tool}
+--orchestrator {direct,thinking,react,reasoning_tool}
     # Orchestration strategy (default: direct)
 
 --thinking_prompt STR
@@ -274,8 +217,6 @@ elif args.orchestrator == 'thinking':
         thinking_prompt=args.thinking_prompt,
         thinking_max_tokens=args.thinking_max_tokens
     )
-elif args.orchestrator == 'multi_model':
-    orchestrator = MultiModelOrchestrator(llm, strategy='sequential')
 elif args.orchestrator == 'react':
     orchestrator = ReActOrchestrator(llm)
 elif args.orchestrator == 'reasoning_tool':
@@ -324,14 +265,6 @@ python test.py --model_type api --model_path gpt-4 \
   --orchestrator thinking \
   --thinking_prompt "Let's approach this step-by-step:" \
   --thinking_max_tokens 512 \
-  --dataset_path data/instruct_v2.json \
-  --eval instruct
-```
-
-#### Multi-Model (Sequential Reasoning)
-```bash
-python test.py --model_type api --model_path gpt-4 \
-  --orchestrator multi_model \
   --dataset_path data/instruct_v2.json \
   --eval instruct
 ```
@@ -449,7 +382,7 @@ from teval.orchestrators import MyCustomOrchestrator
 
 # Add argument choice
 parser.add_argument('--orchestrator', type=str, default='direct',
-                   choices=['direct', 'thinking', 'multi_model', 'react', 'reasoning_tool', 'my_custom'])
+                   choices=['direct', 'thinking', 'react', 'reasoning_tool', 'my_custom'])
 
 # Add initialization
 elif args.orchestrator == 'my_custom':
@@ -510,8 +443,9 @@ class SelfConsistencyOrchestrator(BaseOrchestrator):
 |--------------|---------------------|---------------|
 | Direct | 1 | 1x (baseline) |
 | ThinkingTokens | 2 | ~2x |
-| MultiModel (Sequential) | 2 | ~2x |
-| MultiModel (Ensemble, N models) | N | Nx |
+| ReAct | 1 | 1x (plus reasoning tokens in a single pass) |
+| ReasoningAsTool | ≥2 | Depends on helper/tool calls |
+| FallbackModel | 2 | ~2x (primary + fallback) |
 
 ### Token Usage
 
@@ -519,15 +453,17 @@ class SelfConsistencyOrchestrator(BaseOrchestrator):
 - Additional tokens = `thinking_max_tokens` + overhead for reasoning prompt
 - Recommendation: Start with 256-512 tokens for thinking phase
 
-**MultiModelOrchestrator**:
-- Sequential: Similar to ThinkingTokens (~2x baseline)
-- Ensemble: Multiplied by number of models
+**ReActOrchestrator**:
+- Single pass but may produce longer outputs due to structured reasoning prompts
+
+**ReasoningAsToolOrchestrator / FallbackModelOrchestrator**:
+- Typically involve 2+ calls (primary reasoning + helper/fallback), so expect ~2x token usage
 
 ### Optimization Tips
 
 1. **Batch Processing**: The orchestrators preserve batch processing from T-Eval
 2. **Caching**: Consider implementing response caching for identical prompts
-3. **Async Generation**: For ensemble strategies, implement async model calls
+3. **Async Generation**: For tool/helper orchestrators, parallelize helper calls when possible
 4. **Selective Orchestration**: Use routing to apply complex orchestration only when needed
 
 ## Testing
@@ -588,9 +524,9 @@ python test.py --orchestrator direct --model_path gpt-4 \
 python test.py --orchestrator thinking --model_path gpt-4 \
   --out_name results_thinking.json --dataset_path data/instruct_v2.json --eval instruct
 
-# 3. Multi-model (if you have multiple models)
-python test.py --orchestrator multi_model --model_path gpt-4 \
-  --out_name results_multimodel.json --dataset_path data/instruct_v2.json --eval instruct
+# 3. ReAct orchestration
+python test.py --orchestrator react --model_path gpt-4 \
+  --out_name results_react.json --dataset_path data/instruct_v2.json --eval instruct
 ```
 
 ### Analyzing Results

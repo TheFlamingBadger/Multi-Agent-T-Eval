@@ -8,7 +8,7 @@ from .azure_openai import AzureOpenAIOrchestrator
 from .base import BaseOrchestrator
 
 
-class JsonFallbackOrchestrator(BaseOrchestrator):
+class FallbackModelOrchestrator(BaseOrchestrator):
     """
     Orchestrator that first queries a local primary model and only escalates to
     an Azure-hosted helper when the primary response cannot be parsed as JSON.
@@ -79,7 +79,7 @@ class JsonFallbackOrchestrator(BaseOrchestrator):
                 "parse_attempt": parse_result,
             }
             trace_entry: Dict[str, Any] = {
-                "strategy": "json_fallback",
+                "strategy": "fallback_model",
                 "config": {
                     "strip_code_fence": self.strip_code_fence,
                 },

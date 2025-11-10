@@ -3,11 +3,10 @@ from teval.utils.meta_template import meta_template_dict
 from teval.orchestrators import (
     DirectOrchestrator,
     ThinkingTokensOrchestrator,
-    MultiModelOrchestrator,
     AzureOpenAIOrchestrator,
     ReActOrchestrator,
     ReasoningAsToolOrchestrator,
-    JsonFallbackOrchestrator,
+    FallbackModelOrchestrator,
 )
 from lagent.llms.huggingface import HFTransformerCasualLM, HFTransformerChat
 from lagent.llms.openai import GPTAPI
@@ -38,8 +37,8 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=1)
     # Orchestrator arguments
     parser.add_argument('--orchestrator', type=str, default='direct', 
-                       choices=['direct', 'thinking', 'multi_model', 'react', 'reasoning_tool', 'json_fallback'],
-                       help='Orchestration strategy: direct, thinking, multi_model, react, reasoning_tool, or json_fallback')
+                       choices=['direct', 'thinking', 'react', 'reasoning_tool', 'fallback_model'],
+                       help='Orchestration strategy: direct, thinking, react, reasoning_tool, or fallback_model')
     parser.add_argument('--thinking_prompt', type=str, 
                        default="First, let's think step by step about how to approach this.",
                        help='Prompt for thinking phase (used with --orchestrator thinking)')
@@ -153,12 +152,6 @@ if __name__ == '__main__':
                     thinking_prompt=args.thinking_prompt,
                     thinking_max_tokens=args.thinking_max_tokens
                 )
-            elif args.orchestrator == 'multi_model':
-                base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
-                orchestrator = MultiModelOrchestrator(
-                    base_orchestrator,
-                    strategy='sequential'
-                )
             elif args.orchestrator == 'react':
                 base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
                 orchestrator = ReActOrchestrator(base_orchestrator)
@@ -168,9 +161,9 @@ if __name__ == '__main__':
                     base_orchestrator,
                     helper_env_path=args.azure_env_path,
                 )
-            elif args.orchestrator == 'json_fallback':
+            elif args.orchestrator == 'fallback_model':
                 base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
-                orchestrator = JsonFallbackOrchestrator(
+                orchestrator = FallbackModelOrchestrator(
                     base_orchestrator,
                     helper_env_path=args.azure_env_path,
                 )
@@ -197,13 +190,6 @@ if __name__ == '__main__':
                     thinking_prompt=args.thinking_prompt,
                     thinking_max_tokens=args.thinking_max_tokens
                 )
-            elif args.orchestrator == 'multi_model':
-                # For multi_model, use same model but with sequential strategy as default
-                # Users can extend this by modifying the code to pass secondary models
-                orchestrator = MultiModelOrchestrator(
-                    llm,
-                    strategy='sequential'
-                )
             elif args.orchestrator == 'react':
                 orchestrator = ReActOrchestrator(llm)
             elif args.orchestrator == 'reasoning_tool':
@@ -211,8 +197,8 @@ if __name__ == '__main__':
                     llm,
                     helper_env_path=args.azure_env_path,
                 )
-            elif args.orchestrator == 'json_fallback':
-                orchestrator = JsonFallbackOrchestrator(
+            elif args.orchestrator == 'fallback_model':
+                orchestrator = FallbackModelOrchestrator(
                     llm,
                     helper_env_path=args.azure_env_path,
                 )
