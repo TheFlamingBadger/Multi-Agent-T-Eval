@@ -7,6 +7,7 @@ from teval.orchestrators import (
     ReActOrchestrator,
     ReasoningAsToolOrchestrator,
     FallbackModelOrchestrator,
+    AgenticOrchestrator,
 )
 from lagent.llms.huggingface import HFTransformerCasualLM, HFTransformerChat
 from lagent.llms.openai import GPTAPI
@@ -37,8 +38,8 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=1)
     # Orchestrator arguments
     parser.add_argument('--orchestrator', type=str, default='direct', 
-                       choices=['direct', 'thinking', 'react', 'reasoning_tool', 'fallback_model'],
-                       help='Orchestration strategy: direct, thinking, react, reasoning_tool, or fallback_model')
+                       choices=['direct', 'thinking', 'react', 'reasoning_tool', 'fallback_model', 'agentic'],
+                       help='Orchestration strategy: direct, thinking, react, reasoning_tool, fallback_model, or agentic')
     parser.add_argument('--thinking_prompt', type=str, 
                        default="First, let's think step by step about how to approach this.",
                        help='Prompt for thinking phase (used with --orchestrator thinking)')
@@ -168,6 +169,11 @@ if __name__ == '__main__':
                     helper_env_path=args.azure_env_path,
                     prompt_type=args.prompt_type,
                 )
+            elif args.orchestrator == 'agentic':
+                base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
+                orchestrator = AgenticOrchestrator(base_orchestrator)
+            else:
+                raise ValueError(f"Unsupported orchestrator for Azure model type: {args.orchestrator}")
         else:
             # Initialize LLM for non-Azure model types
             if args.model_type == 'api':
@@ -204,6 +210,10 @@ if __name__ == '__main__':
                     helper_env_path=args.azure_env_path,
                     prompt_type=args.prompt_type,
                 )
+            elif args.orchestrator == 'agentic':
+                orchestrator = AgenticOrchestrator(llm)
+            else:
+                raise ValueError(f"Unsupported orchestrator: {args.orchestrator}")
         
         print(f"Using {args.orchestrator} orchestrator")
         print(f"Tested {tested_num} samples, left {test_num} samples, total {total_num} samples")
