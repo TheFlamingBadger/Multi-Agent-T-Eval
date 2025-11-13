@@ -5,7 +5,7 @@ from .azure_openai import AzureOpenAIOrchestrator
 from .react import ReActOrchestrator
 from .reasoning_tool import ReasoningAsToolOrchestrator
 from .fallback_model import FallbackModelOrchestrator
-from .agentic import AgenticOrchestrator
+from .agentic import AgenticOrchestrator, AgenticReasoningToolOrchestrator
 
 __all__ = [
     'BaseOrchestrator',
@@ -16,4 +16,5 @@ __all__ = [
     'ReasoningAsToolOrchestrator',
     'FallbackModelOrchestrator',
     'AgenticOrchestrator',
+    'AgenticReasoningToolOrchestrator',
 ]

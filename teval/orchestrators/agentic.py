@@ -1,8 +1,9 @@
 import copy
 from time import perf_counter
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .base import BaseOrchestrator
+from .reasoning_tool import ReasoningAsToolOrchestrator
 
 
 class AgenticOrchestrator(BaseOrchestrator):
@@ -111,12 +112,8 @@ class AgenticOrchestrator(BaseOrchestrator):
             final_response = candidate
 
         trace = {
-            "strategy": "agentic",
-            "config": {
-                "max_review_cycles": self.MAX_REVIEW_CYCLES,
-                "accept_token": self.ACCEPT_TOKEN,
-                "review_system_prompt": self.review_system_prompt,
-            },
+            "strategy": self._trace_strategy(),
+            "config": self._trace_config(),
             "original_messages": history,
             "total_elapsed_seconds": total_elapsed,
             "steps": steps,
@@ -152,6 +149,16 @@ class AgenticOrchestrator(BaseOrchestrator):
         )
         return review_history
 
+    def _trace_strategy(self) -> str:
+        return "agentic"
+
+    def _trace_config(self) -> Dict[str, Any]:
+        return {
+            "max_review_cycles": self.MAX_REVIEW_CYCLES,
+            "accept_token": self.ACCEPT_TOKEN,
+            "review_system_prompt": self.review_system_prompt,
+        }
+
     def _contains_accept_token(self, response: str) -> bool:
         stripped = response.strip()
         return stripped == self.ACCEPT_TOKEN or stripped.startswith(f"{self.ACCEPT_TOKEN}\n")
@@ -169,6 +176,74 @@ class AgenticOrchestrator(BaseOrchestrator):
 
     def _extract_underlying_trace(self) -> Optional[Dict[str, object]]:
         raw_trace = getattr(self.llm, "last_trace", None)
+        if isinstance(raw_trace, list) and raw_trace:
+            return raw_trace[0]
+        if isinstance(raw_trace, dict):
+            return raw_trace
+        return None
+
+
+class AgenticReasoningToolOrchestrator(AgenticOrchestrator):
+    """
+    Agentic orchestrator that routes every model call through ReasoningAsTool.
+
+    Each agentic generation (initial + review passes) gains access to the helper
+    model for escalation via CALL_FOR_HELP, while the outer loop still enforces
+    the self-check acceptance token logic.
+    """
+
+    def __init__(
+        self,
+        llm,
+        helper_env_path: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        call_token: str = ReasoningAsToolOrchestrator.DEFAULT_CALL_TOKEN,
+        final_token: str = ReasoningAsToolOrchestrator.DEFAULT_FINAL_TOKEN,
+        **kwargs,
+    ):
+        super().__init__(llm, **kwargs)
+        self.reasoning_tool = ReasoningAsToolOrchestrator(
+            llm,
+            helper_env_path=helper_env_path,
+            system_prompt=system_prompt,
+            call_token=call_token,
+            final_token=final_token,
+        )
+        self._reasoning_config = {
+            "call_token": call_token,
+            "final_token": final_token,
+            "system_prompt": self.reasoning_tool.system_prompt,
+        }
+
+    def _trace_strategy(self) -> str:
+        return "agentic_reasoning_tool"
+
+    def _trace_config(self) -> Dict[str, Any]:
+        config = super()._trace_config()
+        config.update(
+            {
+                "reasoning_tool": {
+                    "call_token": self._reasoning_config["call_token"],
+                    "final_token": self._reasoning_config["final_token"],
+                    "system_prompt": self._reasoning_config["system_prompt"],
+                }
+            }
+        )
+        return config
+
+    def _call_llm(
+        self,
+        messages: List[Dict[str, str]],
+        **kwargs,
+    ) -> Tuple[str, float, Optional[Dict[str, object]]]:
+        start = perf_counter()
+        response = self.reasoning_tool.completion([messages], **kwargs)[0]
+        elapsed = perf_counter() - start
+        call_trace = self._extract_reasoning_trace()
+        return response, elapsed, call_trace
+
+    def _extract_reasoning_trace(self) -> Optional[Dict[str, object]]:
+        raw_trace = getattr(self.reasoning_tool, "last_trace", None)
         if isinstance(raw_trace, list) and raw_trace:
             return raw_trace[0]
         if isinstance(raw_trace, dict):
