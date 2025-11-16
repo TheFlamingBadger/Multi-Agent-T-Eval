@@ -9,6 +9,7 @@ from teval.orchestrators import (
     FallbackModelOrchestrator,
     AgenticOrchestrator,
     AgenticReasoningToolOrchestrator,
+    RoutingOrchestrator,
 )
 from lagent.llms.huggingface import HFTransformerCasualLM, HFTransformerChat
 from lagent.llms.openai import GPTAPI
@@ -47,10 +48,11 @@ def parse_args():
                            'fallback_model',
                            'agentic',
                            'agentic_reasoning_tool',
+                           'routing',
                        ],
                        help=(
                            'Orchestration strategy: direct, thinking, react, reasoning_tool, '
-                           'fallback_model, agentic, or agentic_reasoning_tool'
+                           'fallback_model, agentic, agentic_reasoning_tool, or routing'
                        ))
     parser.add_argument('--thinking_prompt', type=str, 
                        default="First, let's think step by step about how to approach this.",
@@ -181,6 +183,12 @@ if __name__ == '__main__':
                     helper_env_path=args.azure_env_path,
                     prompt_type=args.prompt_type,
                 )
+            elif args.orchestrator == 'routing':
+                router_llm = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
+                orchestrator = RoutingOrchestrator(
+                    router_llm,
+                    helper_env_path=args.azure_env_path,
+                )
             elif args.orchestrator == 'agentic_reasoning_tool':
                 base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
                 orchestrator = AgenticReasoningToolOrchestrator(
@@ -227,6 +235,11 @@ if __name__ == '__main__':
                     llm,
                     helper_env_path=args.azure_env_path,
                     prompt_type=args.prompt_type,
+                )
+            elif args.orchestrator == 'routing':
+                orchestrator = RoutingOrchestrator(
+                    llm,
+                    helper_env_path=args.azure_env_path,
                 )
             elif args.orchestrator == 'agentic_reasoning_tool':
                 orchestrator = AgenticReasoningToolOrchestrator(

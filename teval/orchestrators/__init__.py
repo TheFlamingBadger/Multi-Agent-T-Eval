@@ -6,6 +6,7 @@ from .react import ReActOrchestrator
 from .reasoning_tool import ReasoningAsToolOrchestrator
 from .fallback_model import FallbackModelOrchestrator
 from .agentic import AgenticOrchestrator, AgenticReasoningToolOrchestrator
+from .routing import RoutingOrchestrator
 
 __all__ = [
     'BaseOrchestrator',
@@ -17,4 +18,5 @@ __all__ = [
     'FallbackModelOrchestrator',
     'AgenticOrchestrator',
     'AgenticReasoningToolOrchestrator',
+    'RoutingOrchestrator',
 ]
