@@ -38,6 +38,12 @@ def parse_args():
     parser.add_argument('--prompt_type', type=str, default='json', choices=['json', 'str'])
     parser.add_argument('--meta_template', type=str, default='qwen')
     parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument(
+        '--naive-prompt',
+        dest='naive_prompt',
+        action='store_true',
+        help='Use the original routing prompt (without skill scores) for RoutingOrchestrator.',
+    )
     # Orchestrator arguments
     parser.add_argument('--orchestrator', type=str, default='direct', 
                        choices=[
@@ -188,6 +194,7 @@ if __name__ == '__main__':
                 orchestrator = RoutingOrchestrator(
                     router_llm,
                     helper_env_path=args.azure_env_path,
+                    use_naive_prompt=args.naive_prompt,
                 )
             elif args.orchestrator == 'agentic_reasoning_tool':
                 base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
@@ -240,6 +247,7 @@ if __name__ == '__main__':
                 orchestrator = RoutingOrchestrator(
                     llm,
                     helper_env_path=args.azure_env_path,
+                    use_naive_prompt=args.naive_prompt,
                 )
             elif args.orchestrator == 'agentic_reasoning_tool':
                 orchestrator = AgenticReasoningToolOrchestrator(

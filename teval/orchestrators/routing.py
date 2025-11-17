@@ -17,6 +17,7 @@ class RoutingOrchestrator(BaseOrchestrator):
         router_llm,
         helper_env_path: Optional[str] = None,
         router_system_prompt: Optional[str] = None,
+        use_naive_prompt: bool = False,
         **kwargs,
     ) -> None:
         """
@@ -27,15 +28,20 @@ class RoutingOrchestrator(BaseOrchestrator):
                 model path).
             router_system_prompt: Optional override for the routing system
                 prompt.
+            use_naive_prompt: If True, use the original minimal routing prompt
+                (without scores) to retain previous behavior.
             **kwargs: Forwarded to BaseOrchestrator.
         """
         super().__init__(router_llm, **kwargs)
         self.router_llm = router_llm
         self.small_completion_llm = router_llm
         self.large_completion_llm = AzureOpenAIOrchestrator(env_path=helper_env_path)
-        self.router_system_prompt = (
-            router_system_prompt or self._default_router_prompt()
-        )
+        if router_system_prompt:
+            self.router_system_prompt = router_system_prompt
+        elif use_naive_prompt:
+            self.router_system_prompt = self._naive_router_prompt()
+        else:
+            self.router_system_prompt = self._default_router_prompt()
 
     def completion(
         self,
@@ -112,6 +118,20 @@ class RoutingOrchestrator(BaseOrchestrator):
         return self._denormalize_output(results, was_single)
 
     def _default_router_prompt(self) -> str:
+        return (
+            "You are a routing assistant. Read the entire conversation and pick exactly one model "
+            'for the final answer: "small language model" or "large language model". '
+            "Use the following skill scores (out of 100) to guide your choice: "
+            "Small language model — Overall: 61.7; Instruct: 72.7; Plan: 67.2; "
+            "Reason: 54.9; Retrieve: 80.0; Understand: 61.4; Review: 34.1. "
+            "Large language model — Overall: 84.3; Instruct: 98.7; Plan: 78.7; "
+            "Reason: 70.4; Retrieve: 92.6; Understand: 73.3; Review: 92.0. "
+            "Respond with the chosen model name followed by a concise justification that references at least one relevant skill "
+            "advantage and one limitation of that choice. Do not mention the model you did not choose. "
+            "Do not answer the user's question; only pick a model."
+        )
+
+    def _naive_router_prompt(self) -> str:
         return (
             "You are a routing assistant. Read the entire conversation and pick exactly one model to respond to the user's query"
             'Pick either: "small language model" or "large language model". '
