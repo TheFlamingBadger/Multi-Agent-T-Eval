@@ -123,7 +123,7 @@ def _format_percent_delta(reference: Optional[float], current: Optional[float]) 
     if reference in (None, 0) or current is None:
         return "N/A"
     pct = (current - reference) / reference * 100
-    color = GREEN if pct > 0 else RED if pct < 0 else ""
+    color = RED if pct > 0 else GREEN if pct < 0 else ""
     reset = RESET if color else ""
     return f"{color}{pct:+.1f}%{reset}"
 

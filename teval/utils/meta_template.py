@@ -99,4 +99,38 @@ meta_template_dict = dict(
             end="</tool_response><|im_end|>\n",
         ),
     ],
+    qwen3=[
+        dict(role="system", begin="<|system|>\n", end="<|end|>\n"),
+        dict(role="user", begin="<|user|>\n", end="<|end|>\n"),
+        dict(role="function", begin="<|function|>\n", end="<|end|>\n"),
+        dict(
+            role="assistant",
+            begin="<|assistant|>\n",
+            end="<|end|>\n",
+            generate=True,
+        ),
+    ],
+    granite_4=[
+        dict(
+            role="system",
+            begin="<|start_of_role|>system<|end_of_role|>\n",
+            end="<|end_of_text|>\n",
+        ),
+        dict(
+            role="user",
+            begin="<|start_of_role|>user<|end_of_role|>\n",
+            end="<|end_of_text|>\n",
+        ),
+        dict(
+            role="assistant",
+            begin="<|start_of_role|>assistant<|end_of_role|>\n",
+            end="<|end_of_text|>\n",
+            generate=True,
+        ),
+        dict(
+            role="tool",
+            begin="<|start_of_role|>tool<|end_of_role|>\n<tool_response>\n",
+            end="</tool_response><|end_of_text|>\n",
+        ),
+    ],
 )
