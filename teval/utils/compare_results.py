@@ -18,7 +18,7 @@ from .convert_results import (
 )
 
 RED = "\033[91m"
-GREEN = "\033[92m"
+GREEN = "\033[32m"  # standard green; avoids greyscale terminals misreading bright green
 RESET = "\033[0m"
 ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -107,24 +107,25 @@ def _collect_token_stats(result_path: Path) -> Tuple[List[str], List[Optional[fl
 def _format_delta(
     reference: Optional[float], current: Optional[float], suffix: str = ""
 ) -> str:
-    if reference is None or current is None:
+    try:
+        ref_val = float(reference)  # type: ignore[arg-type]
+        cur_val = float(current)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
         return "(N/A)"
-    delta = (reference - current) * 100
+    delta = (cur_val - ref_val) * 100
     text = f"{delta:+.1f}%{suffix}"
-    color = GREEN if delta > 0 else RED if delta < 0 else ""
+    color = GREEN if delta > 0.0 else RED if delta < 0.0 else ""
     reset = RESET if color else ""
     return f"{color}{text}{reset}"
 
 
 def _format_percent_delta(reference: Optional[float], current: Optional[float]) -> str:
     if reference in (None, 0) or current is None:
-        return "(N/A)"
-    pct = (reference - current) / reference * 100
-    if pct is None:
-        return "(N/A)"
+        return "N/A"
+    pct = (current - reference) / reference * 100
     color = GREEN if pct > 0 else RED if pct < 0 else ""
     reset = RESET if color else ""
-    return f"{color}({pct:+.1f}%){reset}"
+    return f"{color}{pct:+.1f}%{reset}"
 
 
 def _color_for_score(score_pct: float) -> str:
@@ -186,11 +187,11 @@ def _render_table(
 
     header_parts = [
         _pad("Category", cat_width, "left"),
-        _pad(name2, score_width),
         _pad(name1, score_width),
+        _pad(name2, score_width),
         _pad("Δ Score", delta_score_w),
-        _pad(f"{name2} Tokens", token_width),
         _pad(f"{name1} Tokens", token_width),
+        _pad(f"{name2} Tokens", token_width),
         _pad("Δ Tokens%", delta_token_w),
     ]
     header = " ".join(header_parts)
@@ -200,15 +201,15 @@ def _render_table(
 
     def _row(idx: int):
         cat = _pad(categories[idx], cat_width, "left")
-        s1 = _pad(_format_score(scores2[idx]), score_width)  # swapped: model2 first
-        s2 = _pad(_format_score(scores1[idx]), score_width)
+        s1 = _pad(_format_score(scores1[idx]), score_width)
+        s2 = _pad(_format_score(scores2[idx]), score_width)
         d_score = _pad(_format_delta(scores1[idx], scores2[idx]), delta_score_w)
         t1 = _pad(
-            f"{tokens2[idx]:.2f}" if isinstance(tokens2[idx], (int, float)) else "N/A",
+            f"{tokens1[idx]:.2f}" if isinstance(tokens1[idx], (int, float)) else "N/A",
             token_width,
         )
         t2 = _pad(
-            f"{tokens1[idx]:.2f}" if isinstance(tokens1[idx], (int, float)) else "N/A",
+            f"{tokens2[idx]:.2f}" if isinstance(tokens2[idx], (int, float)) else "N/A",
             token_width,
         )
         d_tokens = _pad(
@@ -245,6 +246,7 @@ def main():
     name1 = derive_model_name(m1.name)
     name2 = derive_model_name(m2.name)
 
+    # Comparison order: delta = model2 - model1; token Δ is percent change from model1
     _render_table(categories1, scores1, scores2, tokens1, tokens2, name1, name2)
 
 
