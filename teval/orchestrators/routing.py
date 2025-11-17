@@ -112,13 +112,11 @@ class RoutingOrchestrator(BaseOrchestrator):
 
     def _default_router_prompt(self) -> str:
         return (
-            "You are a routing assistant. Read the entire conversation and pick exactly one model "
-            'for the final answer: "small language model" or "large language model". '
-            "Use the following skill scores (out of 100) to guide your choice: "
-            "Small language model — Overall: 61.7; Instruct: 72.7; Plan: 67.2; "
-            "Reason: 54.9; Retrieve: 80.0; Understand: 61.4; Review: 34.1. "
-            "Large language model — Overall: 84.3; Instruct: 98.7; Plan: 78.7; "
-            "Reason: 70.4; Retrieve: 92.6; Understand: 73.3; Review: 92.0. "
+            "You are a routing assistant. Read the entire conversation and pick exactly one model for the final answer:"
+            ' "small language model" or "large language model". '
+            "Send to the large language model when the request involves multi-step reasoning, cross-checking facts, citing or using external sources, critique/review, long or multi-part context, ambiguous goals, or non-trivial code/math. "
+            "Send to the small language model only when the task is short, clearly specified, and requires straightforward instructions, formatting, extraction, or rewriting with no retrieval or deep reasoning. "
+            "If uncertain, prefer the large language model. "
             "Respond with only the chosen model name. Do not explain, justify, or answer the user's question."
         )
 
