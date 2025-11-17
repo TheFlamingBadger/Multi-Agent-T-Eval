@@ -114,9 +114,9 @@ class RoutingOrchestrator(BaseOrchestrator):
         return (
             "You are a routing assistant. Read the entire conversation and pick exactly one model for the final answer:"
             ' "small language model" or "large language model". '
-            "Send to the large language model when the request involves multi-step reasoning, cross-checking facts, citing or using external sources, critique/review, long or multi-part context, ambiguous goals, or non-trivial code/math. "
-            "Send to the small language model only when the task is short, clearly specified, and requires straightforward instructions, formatting, extraction, or rewriting with no retrieval or deep reasoning. "
-            "If uncertain, prefer the large language model. "
+            "Send to the large language model when the request needs multi-step reasoning, outside knowledge/citations, critique/review, long or multi-part context, ambiguous goals, or non-trivial code/math. "
+            "Send to the small language model when the ask is short and concrete: direct instructions, simple formatting, extraction, rewriting, summarizing what is already in the prompt, or filling a template. "
+            "If the task is not clearly in the hard cases above, default to the small language model to save cost. "
             "Respond with only the chosen model name. Do not explain, justify, or answer the user's question."
         )
 
