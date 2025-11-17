@@ -1,0 +1,135 @@
+"""Radar diagram visualizer for one or more orchestrator evaluation result files."""
+
+import argparse
+from pathlib import Path
+from typing import Iterable, List, Optional, Sequence, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+import mmengine
+
+if __package__ in (None, ""):
+    # Allow running as `python teval/utils/visualize_radar_models.py` from repo root.
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from teval.utils.convert_results import compute_scores, derive_model_name
+else:
+    from .convert_results import compute_scores, derive_model_name
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Render a radar diagram from one or more evaluation summary JSON files (model_-1.json)."
+    )
+    parser.add_argument(
+        "result_paths",
+        nargs="+",
+        help="One or more paths to model summary JSON files.",
+    )
+    parser.add_argument(
+        "--title",
+        type=str,
+        default=None,
+        help="Optional diagram title. Defaults to the parent directory name when a single file is provided.",
+    )
+    parser.add_argument(
+        "--export",
+        "--output",
+        dest="export",
+        type=str,
+        default=None,
+        help="Optional path to save the figure (e.g., output.png). Shows the plot interactively regardless.",
+    )
+    return parser.parse_args()
+
+
+def _default_title(paths: Sequence[Path]) -> str:
+    if len(paths) == 1:
+        return paths[0].parent.name or paths[0].parent.as_posix()
+    return "Model Comparison"
+
+
+def _load_scores(result_path: Path) -> Tuple[List[str], List[Optional[float]], Optional[float], str]:
+    """Load summary JSON and compute per-category scores."""
+    data = mmengine.load(result_path)
+    final_scores, category_scores = compute_scores(data)
+    categories = [name for name, _ in category_scores]
+    scores = [score for _, score in category_scores]
+    overall = final_scores[0] if final_scores else None
+    label = derive_model_name(result_path.name)
+    return categories, scores, overall, label
+
+
+def _prepare_series(paths: Iterable[Path]):
+    reference_categories: Optional[List[str]] = None
+    series: List[Tuple[str, List[Optional[float]], Optional[float]]] = []
+
+    for path in paths:
+        categories, scores, overall, label = _load_scores(path)
+        if reference_categories is None:
+            reference_categories = categories
+        elif categories != reference_categories:
+            raise ValueError(
+                f"Category mismatch for {path}: expected {reference_categories}, got {categories}"
+            )
+        series.append((label, scores, overall))
+
+    if reference_categories is None:
+        raise ValueError("No categories found in provided result files.")
+
+    return reference_categories, series
+
+
+def plot_radar(
+    categories: Sequence[str],
+    series: Sequence[Tuple[str, Sequence[Optional[float]], Optional[float]]],
+    *,
+    title: Optional[str] = None,
+):
+    """Plot a radar chart for one or more model score series."""
+    angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
+    angles += angles[:1]  # close the loop
+
+    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={"polar": True})
+
+    for label, scores, overall in series:
+        values = [score if score is not None else 0.0 for score in scores]
+        values += values[:1]
+        display_label = label
+        if overall is not None:
+            display_label = f"{label} (overall {overall:.2f})"
+        ax.plot(angles, values, linewidth=2, label=display_label)
+        ax.fill(angles, values, alpha=0.15)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(categories)
+    ax.set_ylim(0, 1)
+    ax.set_yticks(np.linspace(0, 1, 6))
+    ax.set_yticklabels([f"{tick:.1f}" for tick in np.linspace(0, 1, 6)])
+    ax.set_title(title or "Radar Diagram", pad=20)
+    ax.grid(True, linestyle=":", linewidth=0.8)
+    ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.1))
+
+    fig.tight_layout()
+    return fig, ax
+
+
+def main():
+    args = parse_args()
+    paths = [Path(p).expanduser().resolve() for p in args.result_paths]
+    title = args.title or _default_title(paths)
+
+    categories, series = _prepare_series(paths)
+    fig, _ = plot_radar(categories, series, title=title)
+
+    if args.export:
+        export_path = Path(args.export).expanduser()
+        fig.savefig(export_path, bbox_inches="tight")
+        print(f"Saved radar diagram to {export_path}")
+
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()
