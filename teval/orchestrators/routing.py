@@ -64,11 +64,6 @@ class RoutingOrchestrator(BaseOrchestrator):
             choice, invalid_reason = self._extract_choice(routing_raw)
             selected_path = choice or "large language model"
             is_invalid = invalid_reason is not None
-            if is_invalid:
-                print(
-                    "[RoutingOrchestrator] Invalid routing output; defaulting to "
-                    f'"{selected_path}". Reason: {invalid_reason}. Raw output: {routing_raw}'
-                )
 
             if selected_path == "small language model":
                 completion_start = perf_counter()
@@ -92,8 +87,6 @@ class RoutingOrchestrator(BaseOrchestrator):
                 "messages": routing_messages,
                 "response": routing_raw,
                 "elapsed_seconds": routing_elapsed,
-                "parsed_choice": choice,
-                "invalid_reason": invalid_reason,
             }
             completion_step = {
                 "type": step_type,
@@ -126,9 +119,7 @@ class RoutingOrchestrator(BaseOrchestrator):
             "Reason: 54.9; Retrieve: 80.0; Understand: 61.4; Review: 34.1. "
             "Large language model — Overall: 84.3; Instruct: 98.7; Plan: 78.7; "
             "Reason: 70.4; Retrieve: 92.6; Understand: 73.3; Review: 92.0. "
-            "Respond with the chosen model name followed by a concise justification that references at least one relevant skill "
-            "advantage and one limitation of that choice. Do not mention the model you did not choose. "
-            "Do not answer the user's question; only pick a model."
+            "Respond with only the chosen model name. Do not explain, justify, or answer the user's question."
         )
 
     def _naive_router_prompt(self) -> str:
@@ -137,8 +128,8 @@ class RoutingOrchestrator(BaseOrchestrator):
             'Pick either: "small language model" or "large language model". '
             "The small language model is much cheaper but suited only to very simple tasks "
             "The large language model is expensive but much smarter, suited to tasks with long contexts or those requiring reasoning"
-            "The conversation context is as follows:"
-            ""
+            "The conversation context is as follows: "
+            "Respond with only the chosen model name. Do not explain, justify, or answer the user's question."
         )
 
     def _build_routing_messages(
@@ -156,7 +147,7 @@ class RoutingOrchestrator(BaseOrchestrator):
             {
                 "role": "user",
                 "content": (
-                    "Choose the model now and output only one allowed model name with a short justification."
+                    "Choose the model now and output only one allowed model name. No justification."
                 ),
             },
         ]
@@ -187,7 +178,8 @@ class RoutingOrchestrator(BaseOrchestrator):
         if not unique_matches:
             return None, "no valid model name found"
         if len(unique_matches) > 1:
-            return None, "tie detected between allowed models"
+            first_choice = matches[0].lower()
+            return first_choice, "tie detected between allowed models"
         choice = unique_matches.pop()
         return choice, None
 
