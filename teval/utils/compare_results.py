@@ -51,50 +51,18 @@ def _load_scores(result_path: Path) -> Tuple[List[str], List[Optional[float]]]:
 
 def _collect_token_stats(
     result_path: Path,
-) -> Tuple[List[str], List[Optional[float]], List[int], List[int]]:
+) -> Tuple[List[str], List[Optional[float]]]:
     base_dir = result_path.parent
     model_name = derive_model_name(result_path.name)
     category_files = build_category_file_map(model_name)
 
     category_stats: Dict[str, Dict[str, object]] = {}
     file_cache: Dict[str, Optional[Dict[str, object]]] = {}
-    llm_call_cache: Dict[str, Tuple[int, int]] = {}
     totals: Dict[str, float] = {key: 0.0 for key in TOKEN_KEYS}
     total_count = 0
-    overall_llm_calls = 0
-    overall_samples = 0
-
-    def _has_large_llm_call(trace: object) -> bool:
-        stack = [trace]
-        while stack:
-            current = stack.pop()
-            if isinstance(current, dict):
-                if current.get("type") == "large_llm_call":
-                    return True
-                for value in current.values():
-                    if isinstance(value, (dict, list)):
-                        stack.append(value)
-            elif isinstance(current, list):
-                for item in current:
-                    if isinstance(item, (dict, list)):
-                        stack.append(item)
-        return False
-
-    def _count_llm_calls(file_path: str) -> Tuple[int, int]:
-        """Return (#entries with a large_llm_call, total entries)."""
-        data = mmengine.load(file_path)
-        iterable = data.values() if isinstance(data, dict) else data
-        entries = [entry for entry in iterable if isinstance(entry, dict)]
-        count = 0
-        for entry in entries:
-            if _has_large_llm_call(entry.get("orchestration_trace")):
-                count += 1
-        return count, len(entries)
 
     for category, filenames in category_files.items():
         stats_to_combine: List[Dict[str, object]] = []
-        cat_llm_calls = 0
-        cat_samples = 0
         for filename in filenames:
             for file_path in resolve_category_files(str(base_dir), filename):
                 if file_path not in file_cache:
@@ -102,11 +70,6 @@ def _collect_token_stats(
                 entry_stats = file_cache[file_path]
                 if entry_stats:
                     stats_to_combine.append(entry_stats)
-                if file_path not in llm_call_cache:
-                    llm_call_cache[file_path] = _count_llm_calls(file_path)
-                calls, samples = llm_call_cache[file_path]
-                cat_llm_calls += calls
-                cat_samples += samples
         if stats_to_combine:
             category_stats[category] = combine_category_stats(stats_to_combine)
         else:
@@ -124,25 +87,12 @@ def _collect_token_stats(
                 if isinstance(val, (int, float)):
                     totals[key] += float(val) * float(token_samples)
             total_count += float(token_samples)
-        overall_llm_calls += cat_llm_calls
-        overall_samples += cat_samples
-        category_stats[category]["llm_calls"] = cat_llm_calls
-        category_stats[category]["llm_total"] = cat_samples
-
     overall_avg = {
         key: (totals[key] / total_count) if total_count else None for key in TOKEN_KEYS
     }
     categories = ["Overall"] + list(category_stats.keys())
     avg_totals = [overall_avg] + [
         category_stats[c]["avg_tokens"] for c in category_stats
-    ]
-    call_counts = [overall_llm_calls] + [
-        int(category_stats[c]["llm_calls"]) if category_stats[c]["llm_calls"] else 0
-        for c in category_stats
-    ]
-    call_totals = [overall_samples] + [
-        int(category_stats[c]["llm_total"]) if category_stats[c]["llm_total"] else 0
-        for c in category_stats
     ]
 
     # Return average total tokens per row
@@ -152,7 +102,7 @@ def _collect_token_stats(
             total_tokens_series.append(entry.get("total_tokens"))
         else:
             total_tokens_series.append(None)
-    return categories, total_tokens_series, call_counts, call_totals
+    return categories, total_tokens_series
 
 
 def _format_delta(
@@ -227,10 +177,6 @@ def _render_table(
     scores2: List[Optional[float]],
     tokens1: List[Optional[float]],
     tokens2: List[Optional[float]],
-    calls1: List[int],
-    calls2: List[int],
-    call_totals1: List[int],
-    call_totals2: List[int],
     name1: str,
     name2: str,
 ):
@@ -239,7 +185,6 @@ def _render_table(
     token_width = max(14, len(name1) + 8, len(name2) + 8)
     delta_score_w = 10
     delta_token_w = 12
-    calls_w = 18
 
     header_parts = [
         _pad("Category", cat_width, "left"),
@@ -249,8 +194,6 @@ def _render_table(
         _pad(f"{name1} Tokens", token_width),
         _pad(f"{name2} Tokens", token_width),
         _pad("Δ Tokens%", delta_token_w),
-        _pad(f"{name1} LLM Calls", calls_w),
-        _pad(f"{name2} LLM Calls", calls_w),
     ]
     header = " ".join(header_parts)
 
@@ -274,16 +217,7 @@ def _render_table(
             _format_percent_delta(tokens1[idx], tokens2[idx]), delta_token_w
         )
 
-        def _fmt_calls(call: int, total: int) -> str:
-            if total <= 0:
-                return "N/A"
-            pct = (call / total) * 100
-            return f"{call}/{total} ({pct:.1f}%)"
-
-        c1 = _pad(_fmt_calls(calls1[idx], call_totals1[idx]), calls_w)
-        c2 = _pad(_fmt_calls(calls2[idx], call_totals2[idx]), calls_w)
-
-        print(" ".join([cat, s1, s2, d_score, t1, t2, d_tokens, c1, c2]))
+        print(" ".join([cat, s1, s2, d_score, t1, t2, d_tokens]))
 
     for idx in range(1, len(categories)):
         _row(idx)
@@ -304,8 +238,8 @@ def main():
             f"Category mismatch between models: {categories1} vs {categories2}"
         )
 
-    token_categories1, tokens1, calls1, call_totals1 = _collect_token_stats(m1)
-    token_categories2, tokens2, calls2, call_totals2 = _collect_token_stats(m2)
+    token_categories1, tokens1 = _collect_token_stats(m1)
+    token_categories2, tokens2 = _collect_token_stats(m2)
     if token_categories1 != token_categories2:
         raise ValueError(
             f"Token category mismatch between models: {token_categories1} vs {token_categories2}"
@@ -321,10 +255,6 @@ def main():
         scores2,
         tokens1,
         tokens2,
-        calls1,
-        calls2,
-        call_totals1,
-        call_totals2,
         name1,
         name2,
     )
