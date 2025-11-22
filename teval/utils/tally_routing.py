@@ -31,12 +31,6 @@ def parse_args() -> argparse.Namespace:
         default="work_dirs",
         help="Base directory containing <model>_<orchestrator> outputs (default: work_dirs).",
     )
-    parser.add_argument(
-        "--positive-threshold",
-        type=float,
-        default=1.0,
-        help="Score threshold that defines a positive (default: 1.0).",
-    )
     return parser.parse_args()
 
 
@@ -139,57 +133,61 @@ def main() -> None:
     routes = _collect_routes(routing_dir, args.slm_name)
     llm_scores = _collect_scores(llm_dir, args.llm_name)
 
-    compared_keys = sorted(set(routes) & set(slm_scores))
+    compared_keys = sorted(set(routes) & set(slm_scores) & set(llm_scores))
     missing_route = sorted(set(slm_scores) - set(routes))
     missing_slm = sorted(set(routes) - set(slm_scores))
-    missing_llm = sorted(set(compared_keys) - set(llm_scores))
-
-    threshold = args.positive_threshold
+    missing_llm = sorted(set(routes) - set(llm_scores))
 
     tp = fp = fn = tn = 0
     for key in compared_keys:
         route = routes[key]
         slm_score = slm_scores.get(key)
-        is_positive = slm_score is not None and slm_score >= threshold
+        llm_score = llm_scores.get(key)
+        if slm_score is None or llm_score is None:
+            continue
+        prefer_slm = slm_score >= llm_score
         if route == ROUTE_SLM:
-            if is_positive:
+            if prefer_slm:
                 tp += 1
             else:
                 fp += 1
         else:
-            if is_positive:
+            if prefer_slm:
                 fn += 1
             else:
                 tn += 1
 
+    total = tp + fp + fn + tn
     precision = tp / (tp + fp) if (tp + fp) else None
     recall = tp / (tp + fn) if (tp + fn) else None
-    if precision is None or recall is None or (precision + recall) == 0:
-        f1 = None
-    else:
-        f1 = 2 * precision * recall / (precision + recall)
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if precision is not None and recall is not None and (precision + recall)
+        else None
+    )
+    accuracy = (tp + tn) / total if total else None
 
     print("Routing vs SLM-direct comparison")
     print("--------------------------------")
     print(f"LLM direct dir : {llm_dir}")
     print(f"SLM direct dir : {slm_dir}")
     print(f"Routing dir    : {routing_dir}")
-    print(f"Threshold      : {threshold}")
     print()
-    print(f"Total cases with routing+SLM scores : {len(compared_keys)}")
+    print(f"Total cases with routing+scores      : {len(compared_keys)}")
     print(f"Missing routing entries for SLM cases: {len(missing_route)}")
     print(f"Missing SLM direct scores for routes : {len(missing_slm)}")
-    print(f"Missing LLM direct scores in overlap : {len(missing_llm)}")
+    print(f"Missing LLM direct scores for routes : {len(missing_llm)}")
     print()
     print("Confusion matrix counts")
-    print(f"  TP (routed SLM, score>=thr) : {tp}")
-    print(f"  FP (routed SLM, score<thr)  : {fp}")
-    print(f"  FN (routed LLM, score>=thr) : {fn}")
-    print(f"  TN (routed LLM, score<thr)  : {tn}")
+    print(f"  TP (routed SLM, prefer SLM) : {tp}")
+    print(f"  FP (routed SLM, prefer LLM) : {fp}")
+    print(f"  FN (routed LLM, prefer SLM) : {fn}")
+    print(f"  TN (routed LLM, prefer LLM) : {tn}")
     print()
     print(f"Precision: {_fmt(precision)}")
     print(f"Recall   : {_fmt(recall)}")
     print(f"F1       : {_fmt(f1)}")
+    print(f"Accuracy : {_fmt(accuracy)}")
 
 
 if __name__ == "__main__":
