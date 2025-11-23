@@ -16,6 +16,7 @@ from lagent.llms.openai import GPTAPI
 import argparse
 import mmengine
 import os
+from pathlib import Path
 from tqdm import tqdm
 import shutil
 import random
@@ -43,6 +44,12 @@ def parse_args():
         dest='naive_prompt',
         action='store_true',
         help='Use the original routing prompt (without skill scores) for RoutingOrchestrator.',
+    )
+    parser.add_argument(
+        '--rubric',
+        dest='rubric_prompt',
+        action='store_true',
+        help='Use the rubric-based routing prompt.',
     )
     # Orchestrator arguments
     parser.add_argument('--orchestrator', type=str, default='direct', 
@@ -104,6 +111,25 @@ def split_special_tokens(text):
     text = text.strip('`').strip()
     return text
 
+def _append_routing_option_to_out_dir(out_dir: str, option: str) -> str:
+    path = Path(out_dir)
+    base = path.name
+    if not base:
+        return out_dir
+    marker = "_routing"
+    option_token = f"_{option}"
+    if base.endswith(f"{option_token}{marker}") or base.endswith(option_token):
+        return str(path)
+    if base.endswith(marker):
+        base_no_marker = base[: -len(marker)]
+        if base_no_marker.endswith(option_token):
+            new_base = base
+        else:
+            new_base = f"{base_no_marker}{option_token}{marker}"
+    else:
+        new_base = f"{base}{option_token}"
+    return str(path.with_name(new_base))
+
 def infer(dataset, orchestrator, out_dir, tmp_folder_name='tmp', test_num = 1, batch_size=1):
     random_list = list(dataset.keys())[:test_num]
     batch_infer_list = []; batch_infer_ids = []
@@ -148,6 +174,12 @@ def infer(dataset, orchestrator, out_dir, tmp_folder_name='tmp', test_num = 1, b
     
 if __name__ == '__main__':
     args = parse_args()
+    if args.naive_prompt and args.rubric_prompt:
+        raise ValueError("Choose at most one routing prompt variant.")
+    if args.orchestrator == 'routing':
+        routing_option = 'rubric' if args.rubric_prompt else ('naive' if args.naive_prompt else None)
+        if routing_option:
+            args.out_dir = _append_routing_option_to_out_dir(args.out_dir, routing_option)
     os.makedirs(args.out_dir, exist_ok=True)
     tmp_folder_name = os.path.splitext(args.out_name)[0]
     os.makedirs(os.path.join(args.out_dir, tmp_folder_name), exist_ok=True)
@@ -195,6 +227,7 @@ if __name__ == '__main__':
                     router_llm,
                     helper_env_path=args.azure_env_path,
                     use_naive_prompt=args.naive_prompt,
+                    use_rubric_prompt=args.rubric_prompt,
                 )
             elif args.orchestrator == 'agentic_reasoning_tool':
                 base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
@@ -248,6 +281,7 @@ if __name__ == '__main__':
                     llm,
                     helper_env_path=args.azure_env_path,
                     use_naive_prompt=args.naive_prompt,
+                    use_rubric_prompt=args.rubric_prompt,
                 )
             elif args.orchestrator == 'agentic_reasoning_tool':
                 orchestrator = AgenticReasoningToolOrchestrator(

@@ -1,3 +1,4 @@
+import json
 import re
 from time import perf_counter
 from typing import Dict, List, Optional, Tuple, Union
@@ -18,6 +19,7 @@ class RoutingOrchestrator(BaseOrchestrator):
         helper_env_path: Optional[str] = None,
         router_system_prompt: Optional[str] = None,
         use_naive_prompt: bool = False,
+        use_rubric_prompt: bool = False,
         **kwargs,
     ) -> None:
         """
@@ -30,16 +32,25 @@ class RoutingOrchestrator(BaseOrchestrator):
                 prompt.
             use_naive_prompt: If True, use the original minimal routing prompt
                 (without scores) to retain previous behavior.
+            use_rubric_prompt: If True, use the rubric-based routing prompt.
             **kwargs: Forwarded to BaseOrchestrator.
         """
         super().__init__(router_llm, **kwargs)
         self.router_llm = router_llm
         self.small_completion_llm = router_llm
         self.large_completion_llm = AzureOpenAIOrchestrator(env_path=helper_env_path)
+        if use_naive_prompt and use_rubric_prompt:
+            raise ValueError("Only one routing prompt variant can be enabled.")
+        self.router_prompt_variant = "default"
         if router_system_prompt:
             self.router_system_prompt = router_system_prompt
+            self.router_prompt_variant = "custom"
+        elif use_rubric_prompt:
+            self.router_system_prompt = self._rubric_router_prompt()
+            self.router_prompt_variant = "rubric"
         elif use_naive_prompt:
             self.router_system_prompt = self._naive_router_prompt()
+            self.router_prompt_variant = "naive"
         else:
             self.router_system_prompt = self._default_router_prompt()
 
@@ -130,22 +141,72 @@ class RoutingOrchestrator(BaseOrchestrator):
             "Respond with only the chosen model name. Do not explain, justify, or answer the user's question."
         )
 
+    def _rubric_router_prompt(self) -> str:
+        return (
+            "You are a routing model responsible for choosing whether a query should be handled by a Small Language Model (SLM) or by a Large Language Model (LLM).\n\n"
+            "Your goal is to reliably score the user query on three difficulty axes and then determine the correct model based on the rubric below.\n\n"
+            "---\n"
+            "SCORING RUBRIC (0-3 each)\n\n"
+            "1. Complexity (0-3)\n"
+            "   - 0: Simple, single-step request. No reasoning required.\n"
+            "   - 1: Mild reasoning. One or two steps; low cognitive load.\n"
+            "   - 2: Multi-step reasoning, transformation, or non-trivial logic.\n"
+            "   - 3: Deep or multi-hop reasoning, chain-of-thought needed, or tool-use complexity.\n\n"
+            "2. Ambiguity (0-3)\n"
+            "   - 0: Request is clear, specific, and objective.\n"
+            "   - 1: Minor ambiguity or open-endedness.\n"
+            "   - 2: Requires precision, factual correctness, or domain knowledge.\n"
+            "   - 3: High ambiguity, specialized factual recall, or high error sensitivity.\n\n"
+            "3. Constraint Sensitivity (0-3)\n"
+            "   - 0: Free-form response, no format constraints.\n"
+            "   - 1: Light structure (lists, short templates).\n"
+            "   - 2: Strict formatting or structured outputs (JSON, API args).\n"
+            "   - 3: Highly rigid schemas or multi-field arguments with correctness checks.\n\n"
+            "---\n"
+            "DECISION RULE\n\n"
+            "Compute:\n"
+            "  TOTAL_SCORE = Complexity + Ambiguity + ConstraintSensitivity\n\n"
+            'If TOTAL_SCORE >= 6 -> route to "llm".\n'
+            'If TOTAL_SCORE <= 5 -> route to "slm".\n\n'
+            "When uncertain, err toward the LLM.\n\n"
+            "---\n"
+            "OUTPUT FORMAT\n\n"
+            "Respond ONLY with a JSON object in the exact structure:\n\n"
+            "{\n"
+            '  "complexity": <0-3>,\n'
+            '  "ambiguity": <0-3>,\n'
+            '  "constraint_sensitivity": <0-3>,\n'
+            '  "total": <sum>,\n'
+            '  "route": "large_language_modeel" | "small_language_modeel"\n'
+            "}\n\n"
+            "---\n"
+            "CONTEXT\n\n"
+            "<insert context/>\n"
+        )
+
     def _build_routing_messages(
         self, history: List[Dict[str, str]]
     ) -> List[Dict[str, str]]:
         rendered_history = self._render_history(history)
+        context_block = (
+            f"<conversation_context>\n{rendered_history}\n</conversation_context>"
+        )
+        system_prompt = self.router_system_prompt
+        if "<insert context/>" in system_prompt:
+            system_content = system_prompt.replace("<insert context/>", context_block)
+        else:
+            system_content = f"{system_prompt}\n{context_block}"
         return [
             {
                 "role": "system",
-                "content": (
-                    f"{self.router_system_prompt}\n"
-                    f"<conversation_context>\n{rendered_history}\n</conversation_context>"
-                ),
+                "content": system_content,
             },
             {
                 "role": "user",
                 "content": (
-                    "Choose the model now and output only one allowed model name. No justification."
+                    "Score the conversation and return only the required JSON response."
+                    if self.router_prompt_variant == "rubric"
+                    else "Choose the model now and output only one allowed model name. No justification."
                 ),
             },
         ]
@@ -167,6 +228,9 @@ class RoutingOrchestrator(BaseOrchestrator):
         """
         if not isinstance(text, str):
             return None, "routing output was not a string"
+        json_choice = self._extract_json_route(text)
+        if json_choice:
+            return json_choice, None
         matches = re.findall(
             r"\b(small language model|large language model)\b",
             text,
@@ -180,6 +244,29 @@ class RoutingOrchestrator(BaseOrchestrator):
             return first_choice, "tie detected between allowed models"
         choice = unique_matches.pop()
         return choice, None
+
+    def _extract_json_route(self, text: str) -> Optional[str]:
+        candidate = text.strip()
+        fenced = re.match(
+            r"```(?:json)?\s*(.*?)\s*```$", candidate, flags=re.IGNORECASE | re.DOTALL
+        )
+        if fenced:
+            candidate = fenced.group(1).strip()
+        try:
+            data = json.loads(candidate)
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        route = data.get("route")
+        if not isinstance(route, str):
+            return None
+        normalized = re.sub(r"[\s_]+", " ", route).strip().lower()
+        if normalized in {"slm", "small language model"} or "small" in normalized:
+            return "small language model"
+        if normalized in {"llm", "large language model"} or "large" in normalized:
+            return "large language model"
+        return None
 
     def __repr__(self) -> str:
         return "RoutingOrchestrator(router=small_llm, large=AzureOpenAI)"
