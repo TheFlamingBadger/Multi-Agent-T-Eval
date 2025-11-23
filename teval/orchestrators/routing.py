@@ -146,6 +146,11 @@ class RoutingOrchestrator(BaseOrchestrator):
             "You are a routing model responsible for choosing whether a query should be handled by a Small Language Model (SLM) or by a Large Language Model (LLM).\n\n"
             "Your goal is to reliably score the user query on three difficulty axes and then determine the correct model based on the rubric below.\n\n"
             "---\n"
+            "DIFFICULTY PRIORS (Important)"
+            "Most user queries are NOT highly difficult. The majority fall into the"
+            "0–2 range on each axis. Scores of 3 should be rare and used only for"
+            "genuinely complex cases."
+            "Use these priors when scoring:"
             "SCORING RUBRIC (0-3 each)\n\n"
             "1. Complexity (0-3)\n"
             "   - 0: Simple, single-step request. No reasoning required.\n"
@@ -166,9 +171,8 @@ class RoutingOrchestrator(BaseOrchestrator):
             "DECISION RULE\n\n"
             "Compute:\n"
             "  TOTAL_SCORE = Complexity + Ambiguity + ConstraintSensitivity\n\n"
-            'If TOTAL_SCORE >= 6 -> route to "llm".\n'
-            'If TOTAL_SCORE <= 5 -> route to "slm".\n\n'
-            "When uncertain, err toward the LLM.\n\n"
+            'If TOTAL_SCORE >= 8 -> route to "llm".\n'
+            'If TOTAL_SCORE <= 6 -> route to "slm".\n\n'
             "---\n"
             "OUTPUT FORMAT\n\n"
             "Respond ONLY with a JSON object in the exact structure:\n\n"
