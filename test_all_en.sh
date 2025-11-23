@@ -25,7 +25,8 @@ else
 fi
 echo "Using CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 
-echo "model_type: $1"
+model_type=$1
+echo "model_type: $model_type"
 
 model_path=$2
 echo "load model from: $model_path"
@@ -50,28 +51,32 @@ if [ -z "$5" ]; then
 else
     meta_template=$5
 fi
+extra_args=("${@:6}")
 echo "Model meta_template: $meta_template"
+if [ ${#extra_args[@]} -gt 0 ]; then
+    echo "Forwarding extra args to test.py: ${extra_args[*]}"
+fi
 
 echo ">>> evaluating instruct [1/8]"
-python test.py --model_type $1 --resume --out_name instruct_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/instruct_v2.json --eval instruct --prompt_type json --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator
+python test.py --model_type $model_type --resume --out_name instruct_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/instruct_v2.json --eval instruct --prompt_type json --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator "${extra_args[@]}"
 
 echo ">>> evaluating review [2/8]"
-python test.py --model_type $1 --resume --out_name review_str_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/review_str_v2.json --eval review --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator
+python test.py --model_type $model_type --resume --out_name review_str_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/review_str_v2.json --eval review --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator "${extra_args[@]}"
 
 echo ">>> evaluating plan json [3/8]"
-python test.py --model_type $1 --resume --out_name plan_json_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/plan_json_v2.json --eval plan --prompt_type json --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator
+python test.py --model_type $model_type --resume --out_name plan_json_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/plan_json_v2.json --eval plan --prompt_type json --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator "${extra_args[@]}"
 
 echo ">>> evaluating plan str [4/8]"
-python test.py --model_type $1 --resume --out_name plan_str_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/plan_str_v2.json --eval plan --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator
+python test.py --model_type $model_type --resume --out_name plan_str_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/plan_str_v2.json --eval plan --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator "${extra_args[@]}"
 
 echo ">>> evaluating reason str [5/8]"
-python test.py --model_type $1 --resume --out_name reason_str_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/reason_str_v2.json --eval reason --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator
+python test.py --model_type $model_type --resume --out_name reason_str_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/reason_str_v2.json --eval reason --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator "${extra_args[@]}"
 
 echo ">>> evaluating retrieve str [6/8]"
-python test.py --model_type $1 --resume --out_name retrieve_str_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/retrieve_str_v2.json --eval retrieve --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator
+python test.py --model_type $model_type --resume --out_name retrieve_str_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/retrieve_str_v2.json --eval retrieve --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator "${extra_args[@]}"
 
 echo ">>> evaluating understand str [7/8]"
-python test.py --model_type $1 --resume --out_name understand_str_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/understand_str_v2.json --eval understand --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator
+python test.py --model_type $model_type --resume --out_name understand_str_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/understand_str_v2.json --eval understand --prompt_type str --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator "${extra_args[@]}"
 
 echo ">>> evaluating RRU (reason, retrieve, understand) json [8/8]"
-python test.py --model_type $1 --resume --out_name reason_retrieve_understand_json_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/reason_retrieve_understand_json_v2.json --eval rru --prompt_type json --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator
+python test.py --model_type $model_type --resume --out_name reason_retrieve_understand_json_${display_name}_${orchestrator}.json --out_dir work_dirs/${display_name}_${orchestrator}/ --dataset_path data/reason_retrieve_understand_json_v2.json --eval rru --prompt_type json --model_path $model_path --model_display_name $display_name --meta_template $meta_template --orchestrator $orchestrator "${extra_args[@]}"
