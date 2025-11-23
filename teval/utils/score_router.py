@@ -19,19 +19,32 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
-        "llm_name",
-        help="Display name of the primary (LLM) model, e.g. azure_gpt4o.",
+        "--llm-path",
+        required=True,
+        type=Path,
+        help="Directory containing the LLM direct evaluation logs.",
     )
     parser.add_argument(
-        "slm_name",
-        help="Display name of the small model used for routing, e.g. Qwen2.5.",
+        "--slm-path",
+        required=True,
+        type=Path,
+        help="Directory containing the SLM direct evaluation logs.",
     )
     parser.add_argument(
-        "--work-dir",
-        default="work_dirs",
-        help="Base directory containing <model>_<orchestrator> outputs (default: work_dirs).",
+        "--router-path",
+        required=True,
+        type=Path,
+        help="Directory containing the routing evaluation logs (SLM model run with routing orchestrator).",
     )
     return parser.parse_args()
+
+
+def _infer_display_name(directory: Path) -> str:
+    name = directory.name
+    for suffix in ("_direct", "_routing"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
 
 
 def _iter_entries(data: object) -> Iterator[Tuple[str, dict]]:
@@ -120,18 +133,27 @@ def _fmt(value: Optional[float]) -> str:
 
 def main() -> None:
     args = parse_args()
-    work_dir = Path(args.work_dir)
-    llm_dir = work_dir / f"{args.llm_name}_direct"
-    slm_dir = work_dir / f"{args.slm_name}_direct"
-    routing_dir = work_dir / f"{args.slm_name}_routing"
+
+    llm_dir = args.llm_path
+    slm_dir = args.slm_path
+    routing_dir = args.router_path
 
     for directory in (llm_dir, slm_dir, routing_dir):
         if not directory.exists():
             raise FileNotFoundError(f"Missing directory: {directory}")
 
-    slm_scores = _collect_scores(slm_dir, args.slm_name)
-    routes = _collect_routes(routing_dir, args.slm_name)
-    llm_scores = _collect_scores(llm_dir, args.llm_name)
+    llm_name = _infer_display_name(llm_dir)
+    slm_name = _infer_display_name(slm_dir)
+    routing_name = _infer_display_name(routing_dir)
+    if routing_name != slm_name:
+        raise ValueError(
+            f"Routing directory '{routing_dir}' appears to target '{routing_name}', "
+            f"but SLM directory '{slm_dir}' looks like '{slm_name}'. Ensure they match."
+        )
+
+    slm_scores = _collect_scores(slm_dir, slm_name)
+    routes = _collect_routes(routing_dir, routing_name)
+    llm_scores = _collect_scores(llm_dir, llm_name)
 
     compared_keys = sorted(set(routes) & set(slm_scores) & set(llm_scores))
     missing_route = sorted(set(slm_scores) - set(routes))
