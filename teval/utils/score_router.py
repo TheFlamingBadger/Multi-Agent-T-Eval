@@ -36,15 +36,36 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Directory containing the routing evaluation logs (SLM model run with routing orchestrator).",
     )
+    parser.add_argument(
+        "--llm-name",
+        help="Optional override for the inferred LLM display name token.",
+    )
+    parser.add_argument(
+        "--slm-name",
+        help="Optional override for the inferred SLM display name token (also applied to routing logs).",
+    )
     return parser.parse_args()
 
 
-def _infer_display_name(directory: Path) -> str:
+def _infer_display_tokens(directory: Path) -> Tuple[str, str]:
+    """
+    Return (base_name, prefix) where base_name strips known orchestrator suffixes
+    and prefix trims everything after the first underscore. This keeps names like
+    'Qwen2.5_naive' aligned with 'Qwen2.5' while still retaining the full tag for
+    datasets that include the longer identifier.
+    """
     name = directory.name
-    for suffix in ("_direct", "_routing"):
-        if name.endswith(suffix):
-            return name[: -len(suffix)]
-    return name
+    for marker in ("_direct", "_routing"):
+        idx = name.find(marker)
+        if idx != -1:
+            name = name[:idx]
+            break
+    prefix = name.split("_", 1)[0] if "_" in name else name
+    return name, prefix
+
+
+def _prefix_from_name(name: str) -> str:
+    return name.split("_", 1)[0] if "_" in name else name
 
 
 def _iter_entries(data: object) -> Iterator[Tuple[str, dict]]:
@@ -58,23 +79,26 @@ def _iter_entries(data: object) -> Iterator[Tuple[str, dict]]:
                 yield str(idx), value
 
 
-def _extract_dataset(stem: str, display_name: str) -> Optional[str]:
-    token = f"_{display_name}_"
-    if token in stem:
-        return stem.split(token)[0]
-    token = f"_{display_name}"
-    if token in stem:
-        return stem.split(token)[0]
+def _extract_dataset(stem: str, aliases: Tuple[str, str]) -> Optional[str]:
+    for display_name in aliases:
+        if not display_name:
+            continue
+        token = f"_{display_name}_"
+        if token in stem:
+            return stem.split(token)[0]
+        token = f"_{display_name}"
+        if token in stem:
+            return stem.split(token)[0]
     return None
 
 
-def _collect_scores(directory: Path, display_name: str) -> Dict[CASE_ID, float]:
+def _collect_scores(directory: Path, aliases: Tuple[str, str]) -> Dict[CASE_ID, float]:
     scores: Dict[CASE_ID, float] = {}
     for path in sorted(directory.glob("*.json")):
         stem = path.stem
         if stem.endswith("_-1"):
             continue
-        dataset = _extract_dataset(stem, display_name)
+        dataset = _extract_dataset(stem, aliases)
         if not dataset:
             continue
         data = mmengine.load(path)
@@ -110,13 +134,13 @@ def _detect_route(trace: object) -> Optional[Route]:
     return None
 
 
-def _collect_routes(directory: Path, display_name: str) -> Dict[CASE_ID, Route]:
+def _collect_routes(directory: Path, aliases: Tuple[str, str]) -> Dict[CASE_ID, Route]:
     routes: Dict[CASE_ID, Route] = {}
     for path in sorted(directory.glob("*.json")):
         stem = path.stem
         if stem.endswith("_-1"):
             continue
-        dataset = _extract_dataset(stem, display_name)
+        dataset = _extract_dataset(stem, aliases)
         if not dataset:
             continue
         data = mmengine.load(path)
@@ -142,18 +166,35 @@ def main() -> None:
         if not directory.exists():
             raise FileNotFoundError(f"Missing directory: {directory}")
 
-    llm_name = _infer_display_name(llm_dir)
-    slm_name = _infer_display_name(slm_dir)
-    routing_name = _infer_display_name(routing_dir)
-    if routing_name != slm_name:
+    inferred_llm_name, inferred_llm_prefix = _infer_display_tokens(llm_dir)
+    inferred_slm_name, inferred_slm_prefix = _infer_display_tokens(slm_dir)
+    inferred_routing_name, inferred_routing_prefix = _infer_display_tokens(routing_dir)
+
+    llm_name = args.llm_name or inferred_llm_name
+    slm_name = args.slm_name or inferred_slm_name
+    routing_name = args.slm_name or inferred_routing_name
+
+    llm_prefix = (
+        _prefix_from_name(args.llm_name) if args.llm_name else inferred_llm_prefix
+    )
+    slm_prefix = (
+        _prefix_from_name(args.slm_name) if args.slm_name else inferred_slm_prefix
+    )
+    routing_prefix = (
+        _prefix_from_name(args.slm_name)
+        if args.slm_name
+        else inferred_routing_prefix
+    )
+
+    if routing_prefix != slm_prefix:
         raise ValueError(
             f"Routing directory '{routing_dir}' appears to target '{routing_name}', "
-            f"but SLM directory '{slm_dir}' looks like '{slm_name}'. Ensure they match."
+            f"but SLM directory '{slm_dir}' looks like '{slm_name}'. Ensure the base names match."
         )
 
-    slm_scores = _collect_scores(slm_dir, slm_name)
-    routes = _collect_routes(routing_dir, routing_name)
-    llm_scores = _collect_scores(llm_dir, llm_name)
+    slm_scores = _collect_scores(slm_dir, (slm_name, slm_prefix))
+    routes = _collect_routes(routing_dir, (routing_name, routing_prefix))
+    llm_scores = _collect_scores(llm_dir, (llm_name, llm_prefix))
 
     compared_keys = sorted(set(routes) & set(slm_scores) & set(llm_scores))
     missing_route = sorted(set(slm_scores) - set(routes))
