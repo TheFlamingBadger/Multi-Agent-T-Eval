@@ -150,9 +150,7 @@ class NetworkOrchestrator(BaseOrchestrator):
         normalized: List[Dict[str, Any]] = []
         for idx, ep in enumerate(endpoints):
             if not isinstance(ep, dict):
-                raise ValueError(
-                    f"Endpoint entry at index {idx} is not a dict: {ep!r}"
-                )
+                raise ValueError(f"Endpoint entry at index {idx} is not a dict: {ep!r}")
             name = ep.get("name")
             ep_type = ep.get("type")
             path_value = ep.get("path")
@@ -163,7 +161,9 @@ class NetworkOrchestrator(BaseOrchestrator):
                     f"Endpoint '{name}' has unsupported type '{ep_type}'. "
                     "Use 'hf', 'api', or 'azure'."
                 )
-            if ep_type in {"hf", "api"} and (not path_value or not isinstance(path_value, str)):
+            if ep_type in {"hf", "api"} and (
+                not path_value or not isinstance(path_value, str)
+            ):
                 raise ValueError(
                     f"Endpoint '{name}' is missing a string 'path' or model identifier"
                 )
@@ -195,9 +195,7 @@ class NetworkOrchestrator(BaseOrchestrator):
             )
         return normalized
 
-    def _build_endpoint_llms(
-        self, endpoints: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def _build_endpoint_llms(self, endpoints: List[Dict[str, Any]]) -> Dict[str, Any]:
         llms: Dict[str, Any] = {}
         for ep in endpoints:
             name = ep["name"]
@@ -209,16 +207,26 @@ class NetworkOrchestrator(BaseOrchestrator):
                         f"Unknown meta template '{template_name}' for endpoint '{name}'."
                     )
                 model_kwargs = dict(ep.get("model_kwargs") or {})
+                # Keep behavior consistent with other scripts: default to device_map="auto"
+                model_kwargs.setdefault("device_map", "auto")
                 max_new_tokens = ep.get("max_new_tokens", 512)
                 path_str = ep["path"]
                 if path_str is None:
-                    raise ValueError(f"Endpoint '{name}' is missing a path for HF model loading.")
+                    raise ValueError(
+                        f"Endpoint '{name}' is missing a path for HF model loading."
+                    )
                 path_obj = Path(path_str).expanduser()
-                if (path_obj.is_absolute() or path_str.startswith(".")) and not path_obj.exists():
+                if (
+                    path_obj.is_absolute() or path_str.startswith(".")
+                ) and not path_obj.exists():
                     raise FileNotFoundError(
                         f"Local path for endpoint '{name}' not found: {path_str}"
                     )
-                llm_cls = HFTransformerChat if ep.get("use_chat_template") else HFTransformerCasualLM
+                llm_cls = (
+                    HFTransformerChat
+                    if ep.get("use_chat_template")
+                    else HFTransformerCasualLM
+                )
                 llms[name] = llm_cls(
                     path=path_str,
                     meta_template=meta_template,
