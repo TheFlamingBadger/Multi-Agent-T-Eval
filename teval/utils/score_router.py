@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, Optional, Tuple
+from typing import Dict, Iterable, Iterator, Optional, Sequence, Tuple
 
 import mmengine
 
@@ -79,7 +79,7 @@ def _iter_entries(data: object) -> Iterator[Tuple[str, dict]]:
                 yield str(idx), value
 
 
-def _extract_dataset(stem: str, aliases: Tuple[str, str]) -> Optional[str]:
+def _extract_dataset(stem: str, aliases: Sequence[str]) -> Optional[str]:
     for display_name in aliases:
         if not display_name:
             continue
@@ -92,7 +92,7 @@ def _extract_dataset(stem: str, aliases: Tuple[str, str]) -> Optional[str]:
     return None
 
 
-def _collect_scores(directory: Path, aliases: Tuple[str, str]) -> Dict[CASE_ID, float]:
+def _collect_scores(directory: Path, aliases: Sequence[str]) -> Dict[CASE_ID, float]:
     scores: Dict[CASE_ID, float] = {}
     for path in sorted(directory.glob("*.json")):
         stem = path.stem
@@ -134,7 +134,7 @@ def _detect_route(trace: object) -> Optional[Route]:
     return None
 
 
-def _collect_routes(directory: Path, aliases: Tuple[str, str]) -> Dict[CASE_ID, Route]:
+def _collect_routes(directory: Path, aliases: Sequence[str]) -> Dict[CASE_ID, Route]:
     routes: Dict[CASE_ID, Route] = {}
     for path in sorted(directory.glob("*.json")):
         stem = path.stem
@@ -153,6 +153,15 @@ def _collect_routes(directory: Path, aliases: Tuple[str, str]) -> Dict[CASE_ID, 
 
 def _fmt(value: Optional[float]) -> str:
     return f"{value:.4f}" if isinstance(value, float) else "N/A"
+
+
+def _normalize_aliases(*aliases: str) -> Tuple[str, ...]:
+    """Return ordered unique aliases while dropping empties."""
+    seen = []
+    for alias in aliases:
+        if alias and alias not in seen:
+            seen.append(alias)
+    return tuple(seen)
 
 
 def main() -> None:
@@ -187,14 +196,18 @@ def main() -> None:
     )
 
     if routing_prefix != slm_prefix:
-        raise ValueError(
-            f"Routing directory '{routing_dir}' appears to target '{routing_name}', "
-            f"but SLM directory '{slm_dir}' looks like '{slm_name}'. Ensure the base names match."
+        print(
+            "Warning: Routing and SLM directory names do not share the same base tag. "
+            "Proceeding with a combined set of aliases for matching."
         )
 
-    slm_scores = _collect_scores(slm_dir, (slm_name, slm_prefix))
-    routes = _collect_routes(routing_dir, (routing_name, routing_prefix))
-    llm_scores = _collect_scores(llm_dir, (llm_name, llm_prefix))
+    slm_aliases = _normalize_aliases(slm_name, slm_prefix, routing_prefix)
+    routing_aliases = _normalize_aliases(routing_name, routing_prefix, slm_prefix)
+    llm_aliases = _normalize_aliases(llm_name, llm_prefix)
+
+    slm_scores = _collect_scores(slm_dir, slm_aliases)
+    routes = _collect_routes(routing_dir, routing_aliases)
+    llm_scores = _collect_scores(llm_dir, llm_aliases)
 
     compared_keys = sorted(set(routes) & set(slm_scores) & set(llm_scores))
     missing_route = sorted(set(slm_scores) - set(routes))
