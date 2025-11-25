@@ -265,14 +265,13 @@ def collect_rubric_totals(run_dir: Path) -> Dict[EntryKey, int]:
 def _prepare_points(
     direct_scores: Dict[EntryKey, float],
     rubric_totals: Dict[EntryKey, int],
-) -> List[Tuple[int, float, str]]:
-    points: List[Tuple[int, float, str]] = []
+) -> List[Tuple[int, float]]:
+    points: List[Tuple[int, float]] = []
     for key, score in direct_scores.items():
         total = rubric_totals.get(key)
         if total is None:
             continue
-        category = key[0]
-        points.append((total, score, category))
+        points.append((total, score))
     return points
 
 
@@ -286,30 +285,41 @@ def _linear_fit(x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, float, float]
     return y_pred, float(r2), rmse
 
 
-def plot_scatter(points: List[Tuple[int, float, str]], title: str, export: Optional[Path], show: bool) -> None:
+def plot_scatter(points: List[Tuple[int, float]], title: str, export: Optional[Path], show: bool) -> None:
     if not points:
         raise RuntimeError("No overlapping entries between direct and rubric data.")
 
     x_vals = np.array([p[0] for p in points], dtype=float)
     y_vals = np.array([p[1] for p in points], dtype=float)
-    categories = [p[2] for p in points]
-    unique_cats = list(dict.fromkeys(categories))
-    cmap = plt.get_cmap("tab20")
 
     fig, ax = plt.subplots(figsize=(9, 6))
-    for idx, cat in enumerate(unique_cats):
-        xs = [p[0] for p in points if p[2] == cat]
-        ys = [p[1] for p in points if p[2] == cat]
-        ax.scatter(xs, ys, color=cmap(idx % cmap.N), label=cat, alpha=0.75, edgecolors="black")
 
+    # Box-and-whisker at each total score.
+    grouped: Dict[int, List[float]] = {}
+    for total, score in points:
+        grouped.setdefault(total, []).append(score)
+    totals_sorted = sorted(grouped.keys())
+    data = [grouped[t] for t in totals_sorted]
+    ax.boxplot(
+        data,
+        positions=totals_sorted,
+        widths=0.6,
+        patch_artist=True,
+        boxprops=dict(facecolor="#9ecae1", color="black"),
+        medianprops=dict(color="black", linewidth=1.5),
+        whiskerprops=dict(color="black"),
+        capprops=dict(color="black"),
+        flierprops=dict(markeredgecolor="#08519c", markerfacecolor="#08519c", markersize=4),
+    )
+
+    # Best-fit line computed over individual points.
     y_pred, r2, rmse = _linear_fit(x_vals, y_vals)
     sort_idx = np.argsort(x_vals)
     ax.plot(x_vals[sort_idx], y_pred[sort_idx], color="red", linewidth=2, label="Best fit")
 
-    ax.set_xlabel("Total rubric score (complexity + ambiguity + constraint_sensitivity)")
-    ax.set_ylabel("Evaluation result")
+    ax.set_xlabel("granite_4_4b Estimated Question Difficulty (Rubric Score)")
+    ax.set_ylabel("azure_gpt4o Test Case Score")
     ax.set_title(title)
-    ax.legend(loc="upper right")
     ax.grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
     ax.set_ylim(0, 1.05)
 
