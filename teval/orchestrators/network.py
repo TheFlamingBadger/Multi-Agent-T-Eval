@@ -170,11 +170,15 @@ class NetworkOrchestrator(BaseOrchestrator):
 
             resolved_path = None
             if path_value and isinstance(path_value, str):
-                resolved_path = (
-                    str((path.parent / path_value).resolve())
-                    if not Path(path_value).is_absolute()
-                    else path_value
-                )
+                raw_path = Path(path_value).expanduser()
+                cfg_relative = (path.parent / path_value).expanduser()
+                if raw_path.exists():
+                    resolved_path = str(raw_path.resolve())
+                elif cfg_relative.exists():
+                    resolved_path = str(cfg_relative.resolve())
+                else:
+                    # Keep as-is (likely a HuggingFace repo id or will error later)
+                    resolved_path = path_value
 
             normalized.append(
                 {
@@ -206,9 +210,17 @@ class NetworkOrchestrator(BaseOrchestrator):
                     )
                 model_kwargs = dict(ep.get("model_kwargs") or {})
                 max_new_tokens = ep.get("max_new_tokens", 512)
+                path_str = ep["path"]
+                if path_str is None:
+                    raise ValueError(f"Endpoint '{name}' is missing a path for HF model loading.")
+                path_obj = Path(path_str).expanduser()
+                if (path_obj.is_absolute() or path_str.startswith(".")) and not path_obj.exists():
+                    raise FileNotFoundError(
+                        f"Local path for endpoint '{name}' not found: {path_str}"
+                    )
                 llm_cls = HFTransformerChat if ep.get("use_chat_template") else HFTransformerCasualLM
                 llms[name] = llm_cls(
-                    path=ep["path"],
+                    path=path_str,
                     meta_template=meta_template,
                     max_new_tokens=max_new_tokens,
                     model_kwargs=model_kwargs,
