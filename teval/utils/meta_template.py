@@ -132,5 +132,9 @@ meta_template_dict = dict(
             begin="<|start_of_role|>tool<|end_of_role|>\n<tool_response>\n",
             end="</tool_response><|end_of_text|>\n",
         ),
+        dict(
+            role="function",
+            fallback_role="tool",
+        ),
     ],
 )
