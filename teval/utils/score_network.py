@@ -266,17 +266,41 @@ def main() -> None:
         set().union(*endpoint_scores.values()) - set(routes.keys())
     )
 
-    print("Network routing vs direct endpoints")
-    print("----------------------------------")
+    # Compute confusion-style tallies to mirror score_router output format
+    tp = correct  # routed == best
+    fp = total - correct  # routed but not best
+    fn = len(missing_route)  # missing routing for cases with direct scores
+    tn = 0  # not meaningful in multi-endpoint, kept for format parity
+
+    total_with_missing = total + fn
+    precision = tp / (tp + fp) if (tp + fp) else None
+    recall = tp / (tp + fn) if (tp + fn) else None
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if precision is not None and recall is not None and (precision + recall)
+        else None
+    )
+    accuracy = (tp + tn) / total_with_missing if total_with_missing else None
+
+    print("Routing vs Network-direct comparison")
+    print("------------------------------------")
     print(f"Network config : {args.network_config}")
     print(f"Routing dir    : {routes_dir}")
+    print(f"Endpoints      : {', '.join(endpoint_names)}")
     print()
-    print(f"Endpoints: {', '.join(endpoint_names)}")
-    print(f"Total cases with routing+direct scores: {total}")
-    print(f"Missing routing entries for direct cases: {len(missing_route)}")
+    print(f"Total cases with routing+scores      : {total}")
+    print(f"Missing routing entries for direct cases: {fn}")
     print()
-    print(f"Accuracy (routed == best-by-score, tie-broken by cost): "
-          f"{accuracy:.4f}" if isinstance(accuracy, float) else "Accuracy: N/A")
+    print("Confusion matrix counts")
+    print(f"  TP (routed best endpoint)   : {tp}")
+    print(f"  FP (routed non-best)        : {fp}")
+    print(f"  FN (direct score, no route) : {fn}")
+    print(f"  TN (not used)               : {tn}")
+    print()
+    print(f"Precision: {precision:.4f}" if isinstance(precision, float) else "Precision: N/A")
+    print(f"Recall   : {recall:.4f}" if isinstance(recall, float) else "Recall   : N/A")
+    print(f"F1       : {f1:.4f}" if isinstance(f1, float) else "F1       : N/A")
+    print(f"Accuracy : {accuracy:.4f}" if isinstance(accuracy, float) else "Accuracy : N/A")
     print()
     print("Per-endpoint routing counts:")
     for name in endpoint_names:
