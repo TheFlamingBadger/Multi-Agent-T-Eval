@@ -10,6 +10,7 @@ from teval.orchestrators import (
     AgenticOrchestrator,
     AgenticReasoningToolOrchestrator,
     RoutingOrchestrator,
+    NetworkOrchestrator,
 )
 from lagent.llms.huggingface import HFTransformerCasualLM, HFTransformerChat
 from lagent.llms.openai import GPTAPI
@@ -62,10 +63,11 @@ def parse_args():
                            'agentic',
                            'agentic_reasoning_tool',
                            'routing',
+                           'network',
                        ],
                        help=(
                            'Orchestration strategy: direct, thinking, react, reasoning_tool, '
-                           'fallback_model, agentic, agentic_reasoning_tool, or routing'
+                           'fallback_model, agentic, agentic_reasoning_tool, routing, or network'
                        ))
     parser.add_argument('--thinking_prompt', type=str, 
                        default="First, let's think step by step about how to approach this.",
@@ -75,6 +77,19 @@ def parse_args():
     # Azure OpenAI arguments
     parser.add_argument('--azure_env_path', type=str, default='.env',
                        help='Path to .env file with Azure OpenAI credentials (used with --model_type azure)')
+    parser.add_argument(
+        '--network_config',
+        type=str,
+        default='config/granite_qwen.py',
+        help='Path to a Python file exposing endpoints_dict for the network orchestrator.',
+        dest='network_config',
+    )
+    parser.add_argument(
+        '--network-config',
+        type=str,
+        dest='network_config',
+        help=argparse.SUPPRESS,  # dash alias
+    )
     args = parser.parse_args()
     return args
 
@@ -238,6 +253,12 @@ if __name__ == '__main__':
             elif args.orchestrator == 'agentic':
                 base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
                 orchestrator = AgenticOrchestrator(base_orchestrator)
+            elif args.orchestrator == 'network':
+                router_llm = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
+                orchestrator = NetworkOrchestrator(
+                    router_llm,
+                    endpoint_config_path=args.network_config,
+                )
             else:
                 raise ValueError(f"Unsupported orchestrator for Azure model type: {args.orchestrator}")
         else:
@@ -290,6 +311,11 @@ if __name__ == '__main__':
                 )
             elif args.orchestrator == 'agentic':
                 orchestrator = AgenticOrchestrator(llm)
+            elif args.orchestrator == 'network':
+                orchestrator = NetworkOrchestrator(
+                    llm,
+                    endpoint_config_path=args.network_config,
+                )
             else:
                 raise ValueError(f"Unsupported orchestrator: {args.orchestrator}")
         

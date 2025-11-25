@@ -7,6 +7,7 @@ from .reasoning_tool import ReasoningAsToolOrchestrator
 from .fallback_model import FallbackModelOrchestrator
 from .agentic import AgenticOrchestrator, AgenticReasoningToolOrchestrator
 from .routing import RoutingOrchestrator
+from .network import NetworkOrchestrator
 
 __all__ = [
     'BaseOrchestrator',
@@ -19,4 +20,5 @@ __all__ = [
     'AgenticOrchestrator',
     'AgenticReasoningToolOrchestrator',
     'RoutingOrchestrator',
+    'NetworkOrchestrator',
 ]

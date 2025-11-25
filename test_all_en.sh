@@ -40,6 +40,7 @@ else
     orchestrator=$4
 fi
 valid_orchestrators=("direct" "thinking" "react" "reasoning_tool" "fallback_model" "agentic" "agentic_reasoning_tool" "routing")
+valid_orchestrators=("direct" "thinking" "react" "reasoning_tool" "fallback_model" "agentic" "agentic_reasoning_tool" "routing" "network")
 if [[ ! " ${valid_orchestrators[*]} " =~ " ${orchestrator} " ]]; then
     echo "Error: unsupported orchestrator '$orchestrator'. Valid options: ${valid_orchestrators[*]}"
     exit 1
