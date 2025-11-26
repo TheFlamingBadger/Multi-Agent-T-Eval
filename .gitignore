@@ -119,6 +119,7 @@ work_dirs/
 outputs
 data/
 lagent/
+results/
 
 # Pytorch
 *.pth

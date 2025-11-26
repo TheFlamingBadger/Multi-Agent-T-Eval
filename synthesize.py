@@ -8,7 +8,6 @@ from time import perf_counter
 from typing import Dict, List, Optional, Tuple, Union
 
 import mmengine
-from tqdm import tqdm
 
 from teval.utils.meta_template import meta_template_dict
 from teval.orchestrators.azure_openai import AzureOpenAIOrchestrator
@@ -36,11 +35,21 @@ def parse_args():
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--out_name", type=str, default="tmp.json")
     parser.add_argument("--out_dir", type=str, default="work_dirs/")
-    parser.add_argument("--model_path", type=str, help="Router model identifier or path")
+    parser.add_argument(
+        "--model_path", type=str, help="Router model identifier or path"
+    )
     parser.add_argument(
         "--eval",
         type=str,
-        choices=["instruct", "reason", "plan", "retrieve", "review", "understand", "rru"],
+        choices=[
+            "instruct",
+            "reason",
+            "plan",
+            "retrieve",
+            "review",
+            "understand",
+            "rru",
+        ],
     )
     parser.add_argument(
         "--test_num",
@@ -48,7 +57,9 @@ def parse_args():
         default=-1,
         help="Number of samples to route; -1 means all.",
     )
-    parser.add_argument("--prompt_type", type=str, default="json", choices=["json", "str"])
+    parser.add_argument(
+        "--prompt_type", type=str, default="json", choices=["json", "str"]
+    )
     parser.add_argument("--meta_template", type=str, default="qwen")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument(
@@ -249,24 +260,30 @@ class RoutingSelector:
             self.router_system_prompt = self._default_router_prompt()
             self.router_prompt_variant = "default"
 
-    def route_batch(self, histories: List[List[dict]]) -> List[Tuple[str, str, bool, float, List[dict]]]:
+    def route_batch(
+        self, histories: List[List[dict]]
+    ) -> List[Tuple[str, str, bool, float, List[dict]]]:
         messages_batch = [self._build_routing_messages(h) for h in histories]
         routing_start = perf_counter()
-        responses = self.router_llm.chat(
-            messages_batch, do_sample=False, temperature=0
-        )
+        responses = self.router_llm.chat(messages_batch, do_sample=False, temperature=0)
         routing_elapsed = perf_counter() - routing_start
         per_item_elapsed = routing_elapsed / max(len(histories), 1)
         results = []
         for raw, messages in zip(responses, messages_batch):
             choice, invalid_reason = self._extract_choice(raw)
             selection = choice or "large language model"
-            results.append((selection, raw, invalid_reason is not None, per_item_elapsed, messages))
+            results.append(
+                (selection, raw, invalid_reason is not None, per_item_elapsed, messages)
+            )
         return results
 
-    def _build_routing_messages(self, history: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    def _build_routing_messages(
+        self, history: List[Dict[str, str]]
+    ) -> List[Dict[str, str]]:
         rendered_history = self._render_history(history)
-        context_block = f"<conversation_context>\n{rendered_history}\n</conversation_context>"
+        context_block = (
+            f"<conversation_context>\n{rendered_history}\n</conversation_context>"
+        )
         system_prompt = self.router_system_prompt
         if "<insert context/>" in system_prompt:
             system_content = system_prompt.replace("<insert context/>", context_block)
@@ -336,7 +353,7 @@ class RoutingSelector:
     def _default_router_prompt(self) -> str:
         return (
             "You are a routing assistant. Read the entire conversation and pick exactly one model for the final answer:"
-            ' \"small language model\" or \"large language model\". '
+            ' "small language model" or "large language model". '
             "Send to the large language model when the request needs multi-step reasoning, outside knowledge/citations, critique/review, long or multi-part context, ambiguous goals, or non-trivial code/math. "
             "Send to the small language model when the ask is short and concrete: direct instructions, simple formatting, extraction, rewriting, summarizing what is already in the prompt, or filling a template. "
             "If the task is not clearly in the hard cases above, default to the small language model to save cost. "
@@ -346,7 +363,7 @@ class RoutingSelector:
     def _naive_router_prompt(self) -> str:
         return (
             "You are a routing assistant. Read the entire conversation and pick exactly one model to respond to the user's query"
-            'Pick either: \"small language model\" or \"large language model\". '
+            'Pick either: "small language model" or "large language model". '
             "The small language model is much cheaper but suited only to very simple tasks "
             "The large language model is expensive but much smarter, suited to tasks with long contexts or those requiring reasoning"
             "The conversation context is as follows: "
@@ -383,17 +400,17 @@ class RoutingSelector:
             "DECISION RULE\\n\\n"
             "Compute:\\n"
             "  TOTAL_SCORE = Complexity + Ambiguity + ConstraintSensitivity\\n\\n"
-            'If TOTAL_SCORE >= 8 -> route to \"llm\".\\n'
-            'If TOTAL_SCORE <= 6 -> route to \"slm\".\\n\\n'
+            'If TOTAL_SCORE >= 8 -> route to "llm".\\n'
+            'If TOTAL_SCORE <= 6 -> route to "slm".\\n\\n'
             "---\\n"
             "OUTPUT FORMAT\\n\\n"
             "Respond ONLY with a JSON object in the exact structure:\\n\\n"
             "{\\n"
-            '  \"complexity\": <0-3>,\\n'
-            '  \"ambiguity\": <0-3>,\\n'
-            '  \"constraint_sensitivity\": <0-3>,\\n'
-            '  \"total\": <sum>,\\n'
-            '  \"route\": \"large_language_modeel\" | \"small_language_modeel\"\\n'
+            '  "complexity": <0-3>,\\n'
+            '  "ambiguity": <0-3>,\\n'
+            '  "constraint_sensitivity": <0-3>,\\n'
+            '  "total": <sum>,\\n'
+            '  "route": "large_language_modeel" | "small_language_modeel"\\n'
             "}\\n\\n"
             "---\\n"
             "CONTEXT\\n\\n"
@@ -413,19 +430,21 @@ class NetworkSelector:
         else:
             self.router_system_prompt = self._default_router_prompt(endpoints)
 
-    def route_batch(self, histories: List[List[dict]]) -> List[Tuple[str, str, bool, float, List[dict]]]:
+    def route_batch(
+        self, histories: List[List[dict]]
+    ) -> List[Tuple[str, str, bool, float, List[dict]]]:
         messages_batch = [self._build_routing_messages(h) for h in histories]
         routing_start = perf_counter()
-        responses = self.router_llm.chat(
-            messages_batch, do_sample=False, temperature=0
-        )
+        responses = self.router_llm.chat(messages_batch, do_sample=False, temperature=0)
         routing_elapsed = perf_counter() - routing_start
         per_item_elapsed = routing_elapsed / max(len(histories), 1)
         results = []
         for raw, messages in zip(responses, messages_batch):
             choice, invalid_reason = self._extract_choice(raw)
             selection = choice or self.default_endpoint
-            results.append((selection, raw, invalid_reason is not None, per_item_elapsed, messages))
+            results.append(
+                (selection, raw, invalid_reason is not None, per_item_elapsed, messages)
+            )
         return results
 
     def _default_router_prompt(self, endpoints: List[Dict[str, str]]) -> str:
@@ -439,13 +458,20 @@ class NetworkSelector:
             parts.append(f"- {ep['name']}: {desc}")
         return "\\n".join(parts)
 
-    def _build_routing_messages(self, history: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    def _build_routing_messages(
+        self, history: List[Dict[str, str]]
+    ) -> List[Dict[str, str]]:
         rendered_history = self._render_history(history)
-        context_block = f\"<conversation_context>\\n{rendered_history}\\n</conversation_context>\"
-        system_content = f\"{self.router_system_prompt}\\n{context_block}\"
+        context_block = (
+            f"<conversation_context>\\n{rendered_history}\\n</conversation_context>"
+        )
+        system_content = f"{self.router_system_prompt}\\n{context_block}"
         return [
             {"role": "system", "content": system_content},
-            {"role": "user", "content": "Select the best endpoint and reply with only its name."},
+            {
+                "role": "user",
+                "content": "Select the best endpoint and reply with only its name.",
+            },
         ]
 
     def _render_history(self, history: List[Dict[str, str]]) -> str:
@@ -506,13 +532,17 @@ def _select_routing_endpoints(
     names = [ep["name"] for ep in endpoints]
     if small_override:
         if small_override not in names:
-            raise ValueError(f"--small-endpoint '{small_override}' not found in config endpoints: {names}")
+            raise ValueError(
+                f"--small-endpoint '{small_override}' not found in config endpoints: {names}"
+            )
         small = small_override
     else:
         small = min(endpoints, key=lambda ep: ep.get("cost", float("inf"))).get("name")
     if large_override:
         if large_override not in names:
-            raise ValueError(f"--large-endpoint '{large_override}' not found in config endpoints: {names}")
+            raise ValueError(
+                f"--large-endpoint '{large_override}' not found in config endpoints: {names}"
+            )
         large = large_override
     else:
         large = max(endpoints, key=lambda ep: ep.get("cost", float("-inf"))).get("name")
@@ -520,7 +550,10 @@ def _select_routing_endpoints(
 
 
 def _resolve_endpoint_for_selection(
-    selection: str, orchestrator: str, endpoints: List[dict], small_large: Tuple[str, str]
+    selection: str,
+    orchestrator: str,
+    endpoints: List[dict],
+    small_large: Tuple[str, str],
 ) -> str:
     if orchestrator == "network":
         names_lower = {ep["name"].lower(): ep["name"] for ep in endpoints}
@@ -551,25 +584,35 @@ def synthesize(
     random_list = list(dataset.keys())[:test_num]
     batch_histories: List[List[dict]] = []
     batch_ids: List[str] = []
-    for idx in tqdm(random_list):
+    for idx in random_list:
         history = _normalize_history(dataset[idx]["origin_prompt"])
         batch_histories.append(history)
         batch_ids.append(idx)
         if len(batch_ids) == batch_size or idx == random_list[-1]:
             results = selector.route_batch(batch_histories)
-            for ptr, (selection, routing_raw, invalid_flag, elapsed, routing_messages) in enumerate(results):
+            for ptr, (
+                selection,
+                routing_raw,
+                invalid_flag,
+                elapsed,
+                routing_messages,
+            ) in enumerate(results):
                 data_ptr = batch_ids[ptr]
                 endpoint = _resolve_endpoint_for_selection(
                     selection, orchestrator, endpoints, routing_small_large
                 )
                 endpoint_cache = direct_results.get(endpoint, {})
-                cached = endpoint_cache.get(data_ptr) or endpoint_cache.get(str(data_ptr))
+                cached = endpoint_cache.get(data_ptr) or endpoint_cache.get(
+                    str(data_ptr)
+                )
                 if cached is None:
                     raise KeyError(
                         f"Entry '{data_ptr}' not found in cached direct results for endpoint '{endpoint}'."
                     )
                 record = dict(cached)
-                record["prediction"] = _strip_special_tokens(record.get("prediction", ""))
+                record["prediction"] = _strip_special_tokens(
+                    record.get("prediction", "")
+                )
                 trace = {
                     "strategy": orchestrator,
                     "selection": selection,
@@ -595,7 +638,9 @@ def synthesize(
                 }
                 record["orchestration_trace"] = trace
                 record["inference_time_seconds"] = elapsed
-                mmengine.dump(record, os.path.join(out_dir, tmp_folder_name, f"{data_ptr}.json"))
+                mmengine.dump(
+                    record, os.path.join(out_dir, tmp_folder_name, f"{data_ptr}.json")
+                )
             batch_histories = []
             batch_ids = []
 
@@ -603,7 +648,9 @@ def synthesize(
     file_list = os.listdir(os.path.join(out_dir, tmp_folder_name))
     for filename in file_list:
         file_id = filename.split(".")[0]
-        results[file_id] = mmengine.load(os.path.join(out_dir, tmp_folder_name, filename))
+        results[file_id] = mmengine.load(
+            os.path.join(out_dir, tmp_folder_name, filename)
+        )
     return results
 
 
@@ -625,7 +672,9 @@ if __name__ == "__main__":
 
     dataset_alias, dataset_stem = _dataset_alias(args.dataset_path)
     endpoints = _load_network_config(args.network_config)
-    direct_results, source_paths = _load_direct_results(endpoints, dataset_alias, dataset_stem)
+    direct_results, source_paths = _load_direct_results(
+        endpoints, dataset_alias, dataset_stem
+    )
 
     # Initialize router LLM
     if args.model_type == "azure":
@@ -635,7 +684,9 @@ if __name__ == "__main__":
     elif args.model_type == "hf":
         meta_template = meta_template_dict.get(args.meta_template)
         if "chatglm" in args.model_display_name:
-            router_llm = HFTransformerChat(path=args.model_path, meta_template=meta_template)
+            router_llm = HFTransformerChat(
+                path=args.model_path, meta_template=meta_template
+            )
         else:
             router_llm = HFTransformerCasualLM(
                 path=args.model_path, meta_template=meta_template, max_new_tokens=512
@@ -659,7 +710,9 @@ if __name__ == "__main__":
     )
 
     print(f"Using {args.orchestrator} orchestrator (router-only synthesis)")
-    print(f"Tested {tested_num} samples, left {test_num} samples, total {total_num} samples")
+    print(
+        f"Tested {tested_num} samples, left {test_num} samples, total {total_num} samples"
+    )
     output_file_path = os.path.join(args.out_dir, args.out_name)
     if test_num != 0:
         prediction = synthesize(
