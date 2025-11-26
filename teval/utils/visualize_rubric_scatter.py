@@ -183,25 +183,19 @@ def _parse_score_payload(payload: object) -> Optional[Dict[str, int]]:
     if not isinstance(raw, dict):
         return None
 
-    try:
-        cpx = int(raw.get("complexity"))
-        amb = int(raw.get("ambiguity"))
-        con = int(raw.get("constraint_sensitivity"))
-    except (TypeError, ValueError):
-        return None
+    numeric: Dict[str, int] = {}
+    for key, value in raw.items():
+        if key == "route":
+            continue
+        try:
+            numeric[key] = int(value)
+        except (TypeError, ValueError):
+            continue
 
-    total_val = raw.get("total")
-    try:
-        total = int(total_val) if total_val is not None else cpx + amb + con
-    except (TypeError, ValueError):
-        total = cpx + amb + con
+    if "total" not in numeric and numeric:
+        numeric["total"] = sum(v for k, v in numeric.items() if k != "total")
 
-    return {
-        "complexity": cpx,
-        "ambiguity": amb,
-        "constraint_sensitivity": con,
-        "total": total,
-    }
+    return numeric or None
 
 
 def _extract_total_from_entry(entry: dict) -> Optional[int]:

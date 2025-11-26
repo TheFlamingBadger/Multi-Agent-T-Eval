@@ -66,12 +66,6 @@ else:
     from .format_load import format_load
 
 
-AXES = (
-    ("complexity", "Complexity"),
-    ("ambiguity", "Ambiguity"),
-    ("constraint_sensitivity", "Constraint Sensitivity"),
-    ("total", "Total"),
-)
 DEFAULT_CATEGORY_ORDER = ["Instruct", "Plan", "Reason", "Retrieve", "Understand", "Review"]
 
 
@@ -154,25 +148,19 @@ def _parse_score_payload(payload: object) -> Optional[Dict[str, int]]:
     if not isinstance(raw, dict):
         return None
 
-    try:
-        complexity = int(raw.get("complexity"))
-        ambiguity = int(raw.get("ambiguity"))
-        constraint = int(raw.get("constraint_sensitivity"))
-    except (TypeError, ValueError):
-        return None
+    numeric: Dict[str, int] = {}
+    for key, value in raw.items():
+        if key == "route":
+            continue
+        try:
+            numeric[key] = int(value)
+        except (TypeError, ValueError):
+            continue
 
-    total_val = raw.get("total")
-    try:
-        total = int(total_val) if total_val is not None else complexity + ambiguity + constraint
-    except (TypeError, ValueError):
-        total = complexity + ambiguity + constraint
+    if "total" not in numeric and numeric:
+        numeric["total"] = sum(v for k, v in numeric.items() if k != "total")
 
-    return {
-        "complexity": complexity,
-        "ambiguity": ambiguity,
-        "constraint_sensitivity": constraint,
-        "total": total,
-    }
+    return numeric or None
 
 
 def _extract_scores(entry: dict) -> Optional[Dict[str, int]]:
@@ -275,20 +263,34 @@ def collect_rubric_scores(run_dir: Path) -> Tuple[List[Tuple[str, Dict[str, int]
     return records, category_order, model_name
 
 
+def _infer_axes(records: Sequence[Tuple[str, Dict[str, int]]]) -> List[str]:
+    seen: List[str] = []
+    for _, score in records:
+        for key in score.keys():
+            if key not in seen:
+                seen.append(key)
+    # Always move total to the end if present.
+    if "total" in seen:
+        seen = [k for k in seen if k != "total"] + ["total"]
+    return seen
+
+
 def build_counts(
     records: Sequence[Tuple[str, Dict[str, int]]],
     categories: Sequence[str],
     max_total: int,
-) -> Tuple[Dict[str, Dict[str, List[int]]], Dict[str, List[int]]]:
-    observed_total = max((score["total"] for _, score in records), default=0)
-    total_upper = max(max_total, observed_total)
+) -> Tuple[Dict[str, Dict[str, List[int]]], Dict[str, List[int]], List[str]]:
+    axes = _infer_axes(records)
+    ranges: Dict[str, List[int]] = {}
 
-    ranges = {
-        "complexity": list(range(4)),
-        "ambiguity": list(range(4)),
-        "constraint_sensitivity": list(range(4)),
-        "total": list(range(total_upper + 1)),
-    }
+    for axis in axes:
+        observed_max = max((score.get(axis, 0) for _, score in records), default=0)
+        if axis == "total":
+            upper = max(max_total, observed_max)
+        else:
+            upper = observed_max
+        ranges[axis] = list(range(upper + 1))
+
     counts: Dict[str, Dict[str, List[int]]] = {
         axis: {category: [0] * len(score_range) for category in categories}
         for axis, score_range in ranges.items()
@@ -302,21 +304,25 @@ def build_counts(
             if 0 <= value < len(score_range):
                 counts[axis][category][value] += 1
 
-    return counts, ranges
+    return counts, ranges, axes
 
 
 def plot_stacked_columns(
     counts: Dict[str, Dict[str, List[int]]],
     ranges: Dict[str, List[int]],
+    axes: Sequence[str],
     categories: Sequence[str],
     *,
     title: str,
 ):
-    fig, axes_arr = plt.subplots(2, 2, figsize=(12, 10))
-    axes_flat = axes_arr.flatten()
+    num_axes = len(axes)
+    ncols = 2
+    nrows = int(np.ceil(num_axes / ncols))
+    fig, axes_arr = plt.subplots(nrows, ncols, figsize=(12, 4 * nrows))
+    axes_flat = axes_arr.flatten() if hasattr(axes_arr, "flatten") else [axes_arr]
     cmap = plt.get_cmap("tab20")
 
-    for idx, (axis_key, axis_label) in enumerate(AXES):
+    for idx, axis_key in enumerate(axes):
         ax = axes_flat[idx]
         score_range = ranges[axis_key]
         x = list(score_range)
@@ -337,8 +343,12 @@ def plot_stacked_columns(
         ax.set_xticks(x)
         ax.set_xlabel("Score")
         ax.set_ylabel("Count")
-        ax.set_title(axis_label)
+        ax.set_title(axis_key.replace("_", " ").title())
         ax.grid(axis="y", linestyle=":", linewidth=0.8, alpha=0.7)
+
+    # Hide any unused subplots
+    for j in range(idx + 1, len(axes_flat)):
+        axes_flat[j].set_visible(False)
 
     axes_flat[0].legend(loc="upper right", bbox_to_anchor=(1.35, 1.0), title="Subset")
     fig.suptitle(title, fontsize=14)
@@ -356,9 +366,9 @@ def main() -> None:
     if not records:
         raise RuntimeError(f"No routing rubric scores found under {run_dir}")
 
-    counts, ranges = build_counts(records, categories, args.max_total)
+    counts, ranges, axes = build_counts(records, categories, args.max_total)
     chart_title = args.title or f"Routing Rubric Distribution ({model_name})"
-    fig = plot_stacked_columns(counts, ranges, categories, title=chart_title)
+    fig = plot_stacked_columns(counts, ranges, axes, categories, title=chart_title)
 
     if args.export:
         export_path = args.export.expanduser().resolve()
