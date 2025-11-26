@@ -155,6 +155,16 @@ def _fmt(value: Optional[float]) -> str:
     return f"{value:.4f}" if isinstance(value, float) else "N/A"
 
 
+def _f1(precision: Optional[float], recall: Optional[float]) -> Optional[float]:
+    if (
+        precision is None
+        or recall is None
+        or precision + recall == 0
+    ):
+        return None
+    return 2 * precision * recall / (precision + recall)
+
+
 def _normalize_aliases(*aliases: str) -> Tuple[str, ...]:
     """Return ordered unique aliases while dropping empties."""
     seen = []
@@ -234,13 +244,15 @@ def main() -> None:
                 tn += 1
 
     total = tp + fp + fn + tn
-    precision = tp / (tp + fp) if (tp + fp) else None
-    recall = tp / (tp + fn) if (tp + fn) else None
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if precision is not None and recall is not None and (precision + recall)
-        else None
-    )
+    slm_precision = tp / (tp + fp) if (tp + fp) else None
+    slm_recall = tp / (tp + fn) if (tp + fn) else None
+    slm_f1 = _f1(slm_precision, slm_recall)
+
+    llm_precision = tn / (tn + fn) if (tn + fn) else None
+    llm_recall = tn / (tn + fp) if (tn + fp) else None
+    llm_f1 = _f1(llm_precision, llm_recall)
+
+    slm_call_rate = (tp + fp) / total if total else None
     accuracy = (tp + tn) / total if total else None
 
     print("Routing vs SLM-direct comparison")
@@ -260,10 +272,14 @@ def main() -> None:
     print(f"  FN (routed LLM, prefer SLM) : {fn}")
     print(f"  TN (routed LLM, prefer LLM) : {tn}")
     print()
-    print(f"Precision: {_fmt(precision)}")
-    print(f"Recall   : {_fmt(recall)}")
-    print(f"F1       : {_fmt(f1)}")
-    print(f"Accuracy : {_fmt(accuracy)}")
+    print(f"SLM precision : {_fmt(slm_precision)}")
+    print(f"SLM recall    : {_fmt(slm_recall)}")
+    print(f"SLM F1        : {_fmt(slm_f1)}")
+    print(f"LLM precision : {_fmt(llm_precision)}")
+    print(f"LLM recall    : {_fmt(llm_recall)}")
+    print(f"LLM F1        : {_fmt(llm_f1)}")
+    print(f"SLM call rate : {_fmt(slm_call_rate)}")
+    print(f"Accuracy      : {_fmt(accuracy)}")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ Usage example:
 import argparse
 import importlib.util
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 
 import mmengine
 
@@ -89,6 +89,20 @@ def _collect_scores(directory: Path, aliases: Sequence[str]) -> Dict[CASE_ID, fl
             if isinstance(val, (int, float)):
                 scores[(dataset, entry_id)] = float(val)
     return scores
+
+
+def _fmt(value: Optional[float]) -> str:
+    return f"{value:.4f}" if isinstance(value, float) else "N/A"
+
+
+def _f1(precision: Optional[float], recall: Optional[float]) -> Optional[float]:
+    if (
+        precision is None
+        or recall is None
+        or precision + recall == 0
+    ):
+        return None
+    return 2 * precision * recall / (precision + recall)
 
 
 def _load_endpoints(config_path: Path) -> List[dict]:
@@ -238,49 +252,49 @@ def main() -> None:
 
     routes = _collect_routes(routes_dir, endpoint_names)
 
-    compared_keys = sorted(
-        key
-        for key in routes.keys()
-        if _determine_best_endpoint(key, endpoint_scores, endpoint_costs) is not None
-    )
-    total = len(compared_keys)
-    correct = 0
-    per_endpoint_counts = {name: {"routed": 0, "correct": 0} for name in endpoint_names}
+    all_case_ids: Set[CASE_ID] = set()
+    for scores in endpoint_scores.values():
+        all_case_ids.update(scores.keys())
 
-    for key in compared_keys:
-        routed = routes.get(key)
-        if routed is None:
-            continue
-        best = _determine_best_endpoint(key, endpoint_scores, endpoint_costs)
+    best_by_case: Dict[CASE_ID, str] = {}
+    for case_id in sorted(all_case_ids):
+        best = _determine_best_endpoint(case_id, endpoint_scores, endpoint_costs)
+        if best is not None:
+            best_by_case[case_id] = best
+
+    compared_keys = sorted(case for case in routes.keys() if case in best_by_case)
+    missing_route = sorted(set(best_by_case) - set(routes.keys()))
+    total_cases = len(best_by_case)
+    total_routed_with_truth = len(compared_keys)
+
+    per_endpoint_counts = {
+        name: {"routed": 0, "correct": 0, "best": 0} for name in endpoint_names
+    }
+
+    for case_id, best in best_by_case.items():
+        per_endpoint_counts[best]["best"] += 1
+        routed = routes.get(case_id)
         if routed in per_endpoint_counts:
             per_endpoint_counts[routed]["routed"] += 1
-        if best is None:
-            continue
-        if routed == best:
-            correct += 1
-            if routed in per_endpoint_counts:
-                per_endpoint_counts[routed]["correct"] += 1
+        if routed == best and routed in per_endpoint_counts:
+            per_endpoint_counts[routed]["correct"] += 1
 
-    accuracy = correct / total if total else None
-    missing_route = sorted(
-        set().union(*endpoint_scores.values()) - set(routes.keys())
-    )
+    correct = sum(stats["correct"] for stats in per_endpoint_counts.values())
 
     # Compute confusion-style tallies to mirror score_router output format
     tp = correct  # routed == best
-    fp = total - correct  # routed but not best
+    fp = total_routed_with_truth - correct  # routed but not best
     fn = len(missing_route)  # missing routing for cases with direct scores
     tn = 0  # not meaningful in multi-endpoint, kept for format parity
 
-    total_with_missing = total + fn
+    total_with_missing = total_routed_with_truth + fn
     precision = tp / (tp + fp) if (tp + fp) else None
     recall = tp / (tp + fn) if (tp + fn) else None
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if precision is not None and recall is not None and (precision + recall)
-        else None
-    )
+    f1 = _f1(precision, recall)
     accuracy = (tp + tn) / total_with_missing if total_with_missing else None
+    routing_coverage = (
+        total_routed_with_truth / total_cases if total_cases else None
+    )
 
     print("Routing vs Network-direct comparison")
     print("------------------------------------")
@@ -288,7 +302,8 @@ def main() -> None:
     print(f"Routing dir    : {routes_dir}")
     print(f"Endpoints      : {', '.join(endpoint_names)}")
     print()
-    print(f"Total cases with routing+scores      : {total}")
+    print(f"Total cases with direct scores         : {total_cases}")
+    print(f"Total cases with routing+scores        : {total_routed_with_truth}")
     print(f"Missing routing entries for direct cases: {fn}")
     print()
     print("Confusion matrix counts")
@@ -297,18 +312,29 @@ def main() -> None:
     print(f"  FN (direct score, no route) : {fn}")
     print(f"  TN (not used)               : {tn}")
     print()
-    print(f"Precision: {precision:.4f}" if isinstance(precision, float) else "Precision: N/A")
-    print(f"Recall   : {recall:.4f}" if isinstance(recall, float) else "Recall   : N/A")
-    print(f"F1       : {f1:.4f}" if isinstance(f1, float) else "F1       : N/A")
-    print(f"Accuracy : {accuracy:.4f}" if isinstance(accuracy, float) else "Accuracy : N/A")
+    print(f"Precision (overall): {_fmt(precision)}")
+    print(f"Recall    (overall): {_fmt(recall)}")
+    print(f"F1        (overall): {_fmt(f1)}")
+    print(f"Accuracy  (overall): {_fmt(accuracy)}")
+    print(f"Coverage  (routing): {_fmt(routing_coverage)}")
     print()
-    print("Per-endpoint routing counts:")
+    print("Per-endpoint routing metrics:")
     for name in endpoint_names:
         stats = per_endpoint_counts[name]
         routed = stats["routed"]
         corr = stats["correct"]
-        pct = (corr / routed * 100) if routed else 0.0
-        print(f"  {name:<12} routed: {routed:>5}  correct: {corr:>5}  ({pct:4.1f}%)")
+        best = stats["best"]
+        precision_ep = corr / routed if routed else None
+        recall_ep = corr / best if best else None
+        f1_ep = _f1(precision_ep, recall_ep)
+        call_rate_ep = (
+            routed / total_routed_with_truth if total_routed_with_truth else None
+        )
+        print(
+            f"  {name:<12} routed: {routed:>5}  best: {best:>5}  correct: {corr:>5}  "
+            f"prec: {_fmt(precision_ep)}  rec: {_fmt(recall_ep)}  F1: {_fmt(f1_ep)}  "
+            f"call_rate: {_fmt(call_rate_ep)}"
+        )
 
 
 if __name__ == "__main__":
