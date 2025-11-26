@@ -113,15 +113,15 @@ def parse_args():
         help="(Routing only) Endpoint name to use when router selects the large model.",
     )
     parser.add_argument(
-        "--router_results",
+        "--router_path",
         type=str,
         default=None,
-        help="Optional path to a prior routing output JSON to reuse routing decisions (no new router calls).",
+        help="Optional directory containing prior routing outputs; autodetects the matching dataset file.",
     )
     parser.add_argument(
-        "--router-results",
+        "--router-path",
         type=str,
-        dest="router_results",
+        dest="router_path",
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args()
@@ -635,6 +635,25 @@ def _build_prior_routes(prior_data: object, orchestrator: str) -> Dict[str, dict
     return routes
 
 
+def _find_router_results_file(
+    router_dir: Path, dataset_alias: str, dataset_stem: str
+) -> Path:
+    if not router_dir.is_dir():
+        raise FileNotFoundError(f"Router results directory not found: {router_dir}")
+    candidates = []
+    for path in sorted(router_dir.glob("*.json")):
+        stem = path.stem
+        if stem.endswith("_-1"):
+            continue
+        if stem.startswith(dataset_alias) or stem.startswith(dataset_stem):
+            candidates.append(path)
+    if not candidates:
+        raise FileNotFoundError(
+            f"No routing JSON found in {router_dir} matching dataset '{dataset_alias}' or '{dataset_stem}'."
+        )
+    return candidates[0]
+
+
 def synthesize(
     dataset: dict,
     selector,
@@ -782,10 +801,18 @@ if __name__ == "__main__":
         endpoints, dataset_alias, dataset_stem
     )
 
-    use_prior_routes = args.router_results is not None
+    router_results_path = None
+    if args.router_path:
+        router_results_path = str(
+            _find_router_results_file(
+                Path(args.router_path), dataset_alias, dataset_stem
+            )
+        )
+
+    use_prior_routes = router_results_path is not None
     prior_routes = None
     if use_prior_routes:
-        prior_data = mmengine.load(args.router_results)
+        prior_data = mmengine.load(router_results_path)
         prior_routes = _build_prior_routes(prior_data, args.orchestrator)
         router_llm = None
         selector = None
@@ -830,7 +857,7 @@ if __name__ == "__main__":
         f"Tested {tested_num} samples, left {test_num} samples, total {total_num} samples"
     )
     if use_prior_routes:
-        print(f"Reusing routing decisions from {args.router_results}; no new router calls.")
+        print(f"Reusing routing decisions from {router_results_path}; no new router calls.")
     output_file_path = os.path.join(args.out_dir, args.out_name)
     if test_num != 0:
         prediction = synthesize(
@@ -846,7 +873,7 @@ if __name__ == "__main__":
             batch_size=args.batch_size,
             routing_small_large=routing_small_large,
             prior_routes=prior_routes,
-            router_results_path=args.router_results,
+            router_results_path=router_results_path,
         )
         mmengine.dump(prediction, output_file_path)
 
