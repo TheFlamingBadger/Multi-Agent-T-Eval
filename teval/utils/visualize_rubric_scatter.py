@@ -275,14 +275,44 @@ def _prepare_points(
     return points
 
 
+def _rankdata(values: np.ndarray) -> np.ndarray:
+    """Compute average ranks (1-based) handling ties."""
+    order = np.argsort(values, kind="mergesort")
+    sorted_vals = values[order]
+    ranks = np.empty(len(values), dtype=float)
+    i = 0
+    n = len(values)
+    while i < n:
+        j = i
+        while j + 1 < n and sorted_vals[j + 1] == sorted_vals[i]:
+            j += 1
+        avg_rank = 0.5 * (i + j) + 1  # 1-based average rank for ties
+        ranks[order[i : j + 1]] = avg_rank
+        i = j + 1
+    return ranks
+
+
+def _spearman_corr(x: np.ndarray, y: np.ndarray) -> float:
+    if len(x) < 2 or len(y) < 2:
+        return 0.0
+    rx = _rankdata(x)
+    ry = _rankdata(y)
+    x_mean = rx.mean()
+    y_mean = ry.mean()
+    x_var = ((rx - x_mean) ** 2).sum()
+    y_var = ((ry - y_mean) ** 2).sum()
+    if x_var == 0 or y_var == 0:
+        return 0.0
+    cov = ((rx - x_mean) * (ry - y_mean)).sum()
+    return float(cov / np.sqrt(x_var * y_var))
+
+
 def _linear_fit(x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, float, float]:
     slope, intercept = np.polyfit(x, y, 1)
     y_pred = slope * x + intercept
-    ss_res = np.sum((y - y_pred) ** 2)
-    ss_tot = np.sum((y - np.mean(y)) ** 2)
-    r2 = 1 - ss_res / ss_tot if ss_tot != 0 else 0.0
-    rmse = float(np.sqrt(np.mean((y - y_pred) ** 2)))
-    return y_pred, float(r2), rmse
+    mae = float(np.mean(np.abs(y - y_pred)))
+    spearman = _spearman_corr(x, y)
+    return y_pred, spearman, mae
 
 
 def plot_scatter(points: List[Tuple[int, float]], title: str, export: Optional[Path], show: bool) -> None:
@@ -313,7 +343,7 @@ def plot_scatter(points: List[Tuple[int, float]], title: str, export: Optional[P
     )
 
     # Best-fit line computed over individual points.
-    y_pred, r2, rmse = _linear_fit(x_vals, y_vals)
+    y_pred, spearman, mae = _linear_fit(x_vals, y_vals)
     sort_idx = np.argsort(x_vals)
     ax.plot(x_vals[sort_idx], y_pred[sort_idx], color="red", linewidth=2, label="Best fit")
 
@@ -323,7 +353,7 @@ def plot_scatter(points: List[Tuple[int, float]], title: str, export: Optional[P
     ax.grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
     ax.set_ylim(0, 1.05)
 
-    text = f"R² = {r2:.3f}\nRMSE = {rmse:.3f}"
+    text = f"Spearman = {spearman:.3f}\nMAE = {mae:.3f}"
     ax.text(
         0.02,
         0.98,
