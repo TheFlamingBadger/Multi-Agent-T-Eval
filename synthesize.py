@@ -8,6 +8,7 @@ from time import perf_counter
 from typing import Dict, List, Optional, Tuple, Union
 
 import mmengine
+from tqdm import tqdm
 
 from teval.utils.meta_template import meta_template_dict
 from teval.orchestrators.azure_openai import AzureOpenAIOrchestrator
@@ -550,7 +551,7 @@ def synthesize(
     random_list = list(dataset.keys())[:test_num]
     batch_histories: List[List[dict]] = []
     batch_ids: List[str] = []
-    for idx in random_list:
+    for idx in tqdm(random_list):
         history = _normalize_history(dataset[idx]["origin_prompt"])
         batch_histories.append(history)
         batch_ids.append(idx)
