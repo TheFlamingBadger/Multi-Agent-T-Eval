@@ -112,6 +112,18 @@ def parse_args():
         default=None,
         help="(Routing only) Endpoint name to use when router selects the large model.",
     )
+    parser.add_argument(
+        "--router_results",
+        type=str,
+        default=None,
+        help="Optional path to a prior routing output JSON to reuse routing decisions (no new router calls).",
+    )
+    parser.add_argument(
+        "--router-results",
+        type=str,
+        dest="router_results",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
     return args
 
@@ -568,6 +580,61 @@ def _resolve_endpoint_for_selection(
     return large
 
 
+def _extract_route_from_trace(
+    trace: object, orchestrator: str
+) -> Tuple[Optional[str], Optional[str], Optional[object], Optional[float], Optional[list]]:
+    if not isinstance(trace, dict):
+        return None, None, None, None, None
+    selection = trace.get("selection")
+    resolved = trace.get("resolved_endpoint")
+    invalid = trace.get("invalid_routing_output")
+    elapsed = trace.get("routing_elapsed_seconds")
+    routing_messages = None
+    steps = trace.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if isinstance(step, dict) and step.get("type") == "routing_llm_call":
+                routing_messages = step.get("messages")
+                if selection is None:
+                    selection = step.get("response")
+    if orchestrator == "network":
+        if resolved is None and isinstance(steps, list):
+            for step in steps:
+                if isinstance(step, dict):
+                    ep = step.get("endpoint")
+                    if isinstance(ep, str):
+                        resolved = ep
+                        break
+    return selection, resolved, invalid, elapsed, routing_messages
+
+
+def _build_prior_routes(prior_data: object, orchestrator: str) -> Dict[str, dict]:
+    routes: Dict[str, dict] = {}
+    if isinstance(prior_data, dict):
+        iterator = prior_data.items()
+    else:
+        iterator = []
+    for key, record in iterator:
+        if not isinstance(record, dict):
+            continue
+        trace = record.get("orchestration_trace")
+        sel, resolved, invalid, elapsed, routing_messages = _extract_route_from_trace(
+            trace, orchestrator
+        )
+        selection = sel or resolved
+        if selection is None:
+            continue
+        routes[str(key)] = dict(
+            selection=selection,
+            resolved_endpoint=resolved,
+            invalid_routing_output=invalid,
+            routing_elapsed_seconds=elapsed,
+            routing_messages=routing_messages,
+            routing_response=trace.get("routing_response") if isinstance(trace, dict) else None,
+        )
+    return routes
+
+
 def synthesize(
     dataset: dict,
     selector,
@@ -580,16 +647,45 @@ def synthesize(
     test_num: int,
     batch_size: int,
     routing_small_large: Tuple[str, str],
+    prior_routes: Optional[Dict[str, dict]] = None,
+    router_results_path: Optional[str] = None,
 ):
     random_list = list(dataset.keys())[:test_num]
     batch_histories: List[List[dict]] = []
     batch_ids: List[str] = []
-    for idx in random_list:
+    for idx in tqdm(random_list):
         history = _normalize_history(dataset[idx]["origin_prompt"])
         batch_histories.append(history)
         batch_ids.append(idx)
         if len(batch_ids) == batch_size or idx == random_list[-1]:
-            results = selector.route_batch(batch_histories)
+            if prior_routes is not None:
+                results = []
+                for sample_id in batch_ids:
+                    route_info = prior_routes.get(sample_id) or prior_routes.get(
+                        str(sample_id)
+                    )
+                    if route_info is None:
+                        raise KeyError(
+                            f"Routing decision for sample '{sample_id}' not found in {router_results_path}."
+                        )
+                    selection = route_info.get("selection")
+                    routing_raw = route_info.get("routing_response") or route_info.get(
+                        "response"
+                    )
+                    invalid_flag = route_info.get("invalid_routing_output", False)
+                    elapsed = route_info.get("routing_elapsed_seconds", 0.0)
+                    routing_messages = route_info.get("routing_messages")
+                    results.append(
+                        (
+                            selection,
+                            routing_raw,
+                            invalid_flag,
+                            elapsed,
+                            routing_messages,
+                        )
+                    )
+            else:
+                results = selector.route_batch(batch_histories)
             for ptr, (
                 selection,
                 routing_raw,
@@ -598,8 +694,17 @@ def synthesize(
                 routing_messages,
             ) in enumerate(results):
                 data_ptr = batch_ids[ptr]
-                endpoint = _resolve_endpoint_for_selection(
-                    selection, orchestrator, endpoints, routing_small_large
+                resolved_prior = (
+                    prior_routes.get(data_ptr, {}).get("resolved_endpoint")
+                    if prior_routes
+                    else None
+                )
+                endpoint = (
+                    resolved_prior
+                    if orchestrator == "network" and resolved_prior
+                    else _resolve_endpoint_for_selection(
+                        selection, orchestrator, endpoints, routing_small_large
+                    )
                 )
                 endpoint_cache = direct_results.get(endpoint, {})
                 cached = endpoint_cache.get(data_ptr) or endpoint_cache.get(
@@ -620,6 +725,7 @@ def synthesize(
                     "invalid_routing_output": invalid_flag,
                     "routing_response": routing_raw,
                     "routing_elapsed_seconds": elapsed,
+                    "routing_reused_from": router_results_path if prior_routes else None,
                     "cached_completion": True,
                     "cached_source_path": str(source_paths[endpoint]),
                     "steps": [
@@ -676,34 +782,44 @@ if __name__ == "__main__":
         endpoints, dataset_alias, dataset_stem
     )
 
-    # Initialize router LLM
-    if args.model_type == "azure":
-        router_llm = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
-    elif args.model_type == "api":
-        router_llm = GPTAPI(args.model_path)
-    elif args.model_type == "hf":
-        meta_template = meta_template_dict.get(args.meta_template)
-        if "chatglm" in args.model_display_name:
-            router_llm = HFTransformerChat(
-                path=args.model_path, meta_template=meta_template
+    use_prior_routes = args.router_results is not None
+    prior_routes = None
+    if use_prior_routes:
+        prior_data = mmengine.load(args.router_results)
+        prior_routes = _build_prior_routes(prior_data, args.orchestrator)
+        router_llm = None
+        selector = None
+    else:
+        # Initialize router LLM
+        if args.model_type == "azure":
+            router_llm = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
+        elif args.model_type == "api":
+            router_llm = GPTAPI(args.model_path)
+        elif args.model_type == "hf":
+            meta_template = meta_template_dict.get(args.meta_template)
+            if "chatglm" in args.model_display_name:
+                router_llm = HFTransformerChat(
+                    path=args.model_path, meta_template=meta_template
+                )
+            else:
+                router_llm = HFTransformerCasualLM(
+                    path=args.model_path,
+                    meta_template=meta_template,
+                    max_new_tokens=512,
+                )
+        else:
+            raise ValueError(f"Unsupported model_type: {args.model_type}")
+
+        if args.orchestrator == "network":
+            selector = NetworkSelector(router_llm, endpoints)
+        elif args.orchestrator == "routing":
+            selector = RoutingSelector(
+                router_llm,
+                use_naive_prompt=args.naive_prompt,
+                use_rubric_prompt=args.rubric_prompt,
             )
         else:
-            router_llm = HFTransformerCasualLM(
-                path=args.model_path, meta_template=meta_template, max_new_tokens=512
-            )
-    else:
-        raise ValueError(f"Unsupported model_type: {args.model_type}")
-
-    if args.orchestrator == "network":
-        selector = NetworkSelector(router_llm, endpoints)
-    elif args.orchestrator == "routing":
-        selector = RoutingSelector(
-            router_llm,
-            use_naive_prompt=args.naive_prompt,
-            use_rubric_prompt=args.rubric_prompt,
-        )
-    else:
-        raise ValueError("Only routing or network orchestrators are supported.")
+            raise ValueError("Only routing or network orchestrators are supported.")
 
     routing_small_large = _select_routing_endpoints(
         endpoints, args.small_endpoint, args.large_endpoint
@@ -713,6 +829,8 @@ if __name__ == "__main__":
     print(
         f"Tested {tested_num} samples, left {test_num} samples, total {total_num} samples"
     )
+    if use_prior_routes:
+        print(f"Reusing routing decisions from {args.router_results}; no new router calls.")
     output_file_path = os.path.join(args.out_dir, args.out_name)
     if test_num != 0:
         prediction = synthesize(
@@ -727,6 +845,8 @@ if __name__ == "__main__":
             test_num=test_num,
             batch_size=args.batch_size,
             routing_small_large=routing_small_large,
+            prior_routes=prior_routes,
+            router_results_path=args.router_results,
         )
         mmengine.dump(prediction, output_file_path)
 
