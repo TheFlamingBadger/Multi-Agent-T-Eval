@@ -68,6 +68,7 @@ else:
 
 
 DEFAULT_CATEGORY_ORDER = ["Instruct", "Plan", "Reason", "Retrieve", "Understand", "Review"]
+CASE_ID = Tuple[str, str, str]  # (dataset, category, entry_id)
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,6 +94,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional path to save the figure (e.g., stacked_rubric.png).",
+    )
+    parser.add_argument(
+        "--separate-files",
+        action="store_true",
+        help="Save each axis as its own PNG with the axis name appended to --export.",
     )
     parser.add_argument(
         "--split-by",
@@ -265,11 +271,49 @@ def _order_categories(sources: Sequence[Tuple[str, Path]]) -> List[str]:
     return ordered
 
 
+def _infer_display_tokens(directory: Path) -> Tuple[str, str]:
+    """
+    Return (base_name, prefix) where base_name strips known orchestrator suffixes
+    and prefix trims everything after the first underscore.
+    """
+    name = directory.name
+    for marker in ("_direct", "_routing"):
+        idx = name.find(marker)
+        if idx != -1:
+            name = name[:idx]
+            break
+    prefix = name.split("_", 1)[0] if "_" in name else name
+    return name, prefix
+
+
+def _normalize_aliases(*aliases: str) -> Tuple[str, ...]:
+    """Return ordered unique aliases while dropping empties."""
+    seen = []
+    for alias in aliases:
+        if alias and alias not in seen:
+            seen.append(alias)
+    return tuple(seen)
+
+
+def _extract_dataset(stem: str, aliases: Sequence[str]) -> Optional[str]:
+    for alias in aliases:
+        if not alias:
+            continue
+        token = f"_{alias}_"
+        if token in stem:
+            return stem.split(token)[0]
+        token = f"_{alias}"
+        if token in stem:
+            return stem.split(token)[0]
+    return None
+
+
 @dataclass
 class RubricRecord:
     category: str
     entry_id: str
     scores: Dict[str, int]
+    dataset: str
 
 
 def collect_rubric_scores(run_dir: Path) -> Tuple[List[RubricRecord], List[str], str]:
@@ -284,6 +328,8 @@ def collect_rubric_scores(run_dir: Path) -> Tuple[List[RubricRecord], List[str],
         )
 
     category_order = _order_categories(sources)
+    inferred_name, inferred_prefix = _infer_display_tokens(run_dir)
+    name_aliases = _normalize_aliases(model_name, inferred_name, inferred_prefix)
     records: List[RubricRecord] = []
     for category, path in sources:
         for entry in _load_entries_from_path(path):
@@ -291,7 +337,10 @@ def collect_rubric_scores(run_dir: Path) -> Tuple[List[RubricRecord], List[str],
             scores = _extract_scores(payload)
             if scores is None:
                 continue
-            records.append(RubricRecord(category=category, entry_id=entry_id, scores=scores))
+            dataset = _extract_dataset(path.stem, name_aliases) or path.stem
+            records.append(
+                RubricRecord(category=category, entry_id=entry_id, scores=scores, dataset=dataset)
+            )
 
     return records, category_order, model_name
 
@@ -361,13 +410,17 @@ def _build_group_counts(
     return counts
 
 
-def _collect_eval_scores(base_dir: Path) -> Dict[Tuple[str, str], float]:
+def _collect_eval_scores(
+    base_dir: Path, name_aliases: Sequence[str]
+) -> Dict[Tuple[str, str, str], float]:
     summary_file = _discover_summary_file(base_dir)
     model_name = derive_model_name(summary_file.name) if summary_file else base_dir.name
+    name_aliases = _normalize_aliases(*name_aliases, model_name)
     sources = _discover_sources(base_dir, model_name)
-    scores: Dict[Tuple[str, str], float] = {}
+    scores: Dict[Tuple[str, str, str], float] = {}
 
     for category, path in sources:
+        dataset = _extract_dataset(path.stem, name_aliases) or path.stem
         for entry_id, entry in _load_entries_from_path(path):
             value = None
             if isinstance(entry, tuple):  # backwards compat
@@ -375,14 +428,14 @@ def _collect_eval_scores(base_dir: Path) -> Dict[Tuple[str, str], float]:
             if isinstance(entry, dict):
                 value = entry.get("evaluation_result")
             if isinstance(value, (int, float)):
-                scores[(category, str(entry_id))] = float(value)
+                scores[(dataset, category, str(entry_id))] = float(value)
     return scores
 
 
 SCORE_BUCKETS: Dict[str, Tuple[str, str]] = {
-    "llm_better": ("SLM - LLM < -0.5", "red"),
-    "llm_marginal": ("-0.5 ≤ SLM - LLM < 0", "yellow"),
-    "slm_not_worse": ("SLM - LLM ≥ 0", "green"),
+    "llm_better": ("SLM - LLM < -0.5", (1.0, 0.4, 0.4)),          # (255, 102, 102)
+    "llm_marginal": ("-0.5 ≤ SLM - LLM < 0", (1.0, 1.0, 0.4)),    # (255, 255, 102)
+    "slm_not_worse": ("SLM - LLM ≥ 0", (0.615686, 0.886275, 0.309804)),  # (157, 226, 79)
 }
 
 
@@ -397,8 +450,8 @@ def _bucket_for_diff(diff: float) -> str:
 def _build_score_bucket_counts(
     records: Sequence[RubricRecord],
     ranges: Dict[str, List[int]],
-    slm_scores: Dict[Tuple[str, str], float],
-    llm_scores: Dict[Tuple[str, str], float],
+    slm_scores: Dict[Tuple[str, str, str], float],
+    llm_scores: Dict[Tuple[str, str, str], float],
 ) -> Tuple[Dict[str, Dict[str, List[int]]], int]:
     counts: Dict[str, Dict[str, List[int]]] = {
         axis: {bucket: [0] * len(score_range) for bucket in SCORE_BUCKETS}
@@ -406,7 +459,7 @@ def _build_score_bucket_counts(
     }
     missing = 0
     for record in records:
-        key = (record.category, record.entry_id)
+        key = (record.dataset, record.category, record.entry_id)
         slm_val = slm_scores.get(key)
         llm_val = llm_scores.get(key)
         if slm_val is None or llm_val is None:
@@ -426,13 +479,12 @@ def plot_columns(
     axes: Sequence[str],
     series_order: Sequence[str],
     *,
-    title: str,
+    title: Optional[str],
     stacked: bool,
     colors: Optional[Dict[str, str]] = None,
-    legend_title: str = "Series",
 ):
     num_axes = len(axes)
-    ncols = 2
+    ncols = 2 if num_axes > 1 else 1
     nrows = int(np.ceil(num_axes / ncols))
     fig, axes_arr = plt.subplots(nrows, ncols, figsize=(12, 4 * nrows))
     axes_flat = axes_arr.flatten() if hasattr(axes_arr, "flatten") else [axes_arr]
@@ -468,7 +520,7 @@ def plot_columns(
                     positions,
                     series,
                     width=bar_width,
-                    label=label if len(series_order) > 1 else None,
+                    label=label,
                     color=color,
                     edgecolor="black",
                 )
@@ -479,18 +531,49 @@ def plot_columns(
         ax.set_ylabel("Count")
         ax.set_title(axis_key.replace("_", " ").title())
         ax.grid(axis="y", linestyle=":", linewidth=0.8, alpha=0.7)
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            ax.legend(handles, labels, loc="best", framealpha=0.9)
 
     # Hide any unused subplots
     for j in range(idx + 1, len(axes_flat)):
         axes_flat[j].set_visible(False)
 
-    if len(series_order) > 1 or stacked:
-        axes_flat[0].legend(
-            loc="upper right", bbox_to_anchor=(1.35, 1.0), title=legend_title
-        )
-    fig.suptitle(title, fontsize=14)
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    if title:
+        fig.suptitle(title, fontsize=14)
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
+    else:
+        fig.tight_layout()
     return fig
+
+
+def _save_separate_figures(
+    base_path: Path,
+    counts: Dict[str, Dict[str, List[int]]],
+    ranges: Dict[str, List[int]],
+    axes: Sequence[str],
+    series_order: Sequence[str],
+    *,
+    title: Optional[str],
+    stacked: bool,
+    colors: Optional[Dict[str, str]] = None,
+) -> None:
+    for axis_key in axes:
+        sub_counts = {axis_key: counts[axis_key]}
+        sub_ranges = {axis_key: ranges[axis_key]}
+        fig = plot_columns(
+            sub_counts,
+            sub_ranges,
+            [axis_key],
+            series_order,
+            title=None,
+            stacked=stacked,
+            colors=colors,
+        )
+        export_path = base_path.with_name(f"{base_path.stem}_{axis_key}{base_path.suffix}")
+        fig.savefig(export_path, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved {axis_key} chart to {export_path}")
 
 
 def main() -> None:
@@ -505,7 +588,6 @@ def main() -> None:
 
     ranges, axes = _compute_ranges(records, args.max_total)
     chart_title = args.title or f"Routing Rubric Distribution ({model_name})"
-    legend_title = "Subset"
     series_order: Sequence[str] = ["All"]
     stacked = False
     colors: Optional[Dict[str, str]] = None
@@ -525,14 +607,17 @@ def main() -> None:
         for directory in (slm_dir, llm_dir):
             if not directory.exists():
                 raise FileNotFoundError(f"Missing directory: {directory}")
-        slm_scores = _collect_eval_scores(slm_dir)
-        llm_scores = _collect_eval_scores(llm_dir)
+        slm_name, slm_prefix = _infer_display_tokens(slm_dir)
+        llm_name, llm_prefix = _infer_display_tokens(llm_dir)
+        slm_aliases = _normalize_aliases(slm_name, slm_prefix)
+        llm_aliases = _normalize_aliases(llm_name, llm_prefix)
+        slm_scores = _collect_eval_scores(slm_dir, slm_aliases)
+        llm_scores = _collect_eval_scores(llm_dir, llm_aliases)
         counts, missing = _build_score_bucket_counts(records, ranges, slm_scores, llm_scores)
         if missing:
             print(f"Warning: skipped {missing} routing entries without matching SLM/LLM scores.")
         series_order = list(SCORE_BUCKETS.keys())
         colors = {bucket: color for bucket, (_, color) in SCORE_BUCKETS.items()}
-        legend_title = "SLM vs LLM"
         stacked = True
     else:
         counts = _build_unstacked_counts(records, ranges)
@@ -542,16 +627,29 @@ def main() -> None:
         ranges,
         axes,
         series_order,
-        title=chart_title,
+        title=None,
         stacked=stacked,
         colors=colors,
-        legend_title=legend_title,
     )
+
+    if args.separate_files and not args.export:
+        raise ValueError("--separate-files requires --export to specify the base file path.")
 
     if args.export:
         export_path = args.export.expanduser().resolve()
         fig.savefig(export_path, bbox_inches="tight")
         print(f"Saved stacked charts to {export_path}")
+        if args.separate_files:
+            _save_separate_figures(
+                export_path,
+                counts,
+                ranges,
+                axes,
+                series_order,
+                title=chart_title,
+                stacked=stacked,
+                colors=colors,
+            )
 
     if not args.no_show:
         plt.show()
