@@ -433,9 +433,9 @@ def _collect_eval_scores(
 
 
 SCORE_BUCKETS: Dict[str, Tuple[str, str]] = {
-    "llm_better": ("SLM - LLM < -0.5", (1.0, 0.4, 0.4)),          # (255, 102, 102)
-    "llm_marginal": ("-0.5 ≤ SLM - LLM < 0", (1.0, 1.0, 0.4)),    # (255, 255, 102)
-    "slm_not_worse": ("SLM - LLM ≥ 0", (0.615686, 0.886275, 0.309804)),  # (157, 226, 79)
+    "llm_better": ("SLM - LLM < -0.5", (240 / 255, 57 / 255, 83 / 255)),      # (240, 57, 83)
+    "llm_marginal": ("-0.5 ≤ SLM - LLM < 0", (255 / 255, 185 / 255, 27 / 255)),  # (255, 185, 27)
+    "slm_not_worse": ("SLM - LLM ≥ 0", (30 / 255, 212 / 255, 163 / 255)),      # (30, 212, 163)
 }
 
 
@@ -482,11 +482,12 @@ def plot_columns(
     title: Optional[str],
     stacked: bool,
     colors: Optional[Dict[str, str]] = None,
+    figsize: Optional[Tuple[float, float]] = None,
 ):
     num_axes = len(axes)
     ncols = 2 if num_axes > 1 else 1
     nrows = int(np.ceil(num_axes / ncols))
-    fig, axes_arr = plt.subplots(nrows, ncols, figsize=(12, 4 * nrows))
+    fig, axes_arr = plt.subplots(nrows, ncols, figsize=figsize or (12, 4 * nrows))
     axes_flat = axes_arr.flatten() if hasattr(axes_arr, "flatten") else [axes_arr]
     cmap = plt.get_cmap("tab20")
 
@@ -558,6 +559,10 @@ def _save_separate_figures(
     stacked: bool,
     colors: Optional[Dict[str, str]] = None,
 ) -> None:
+    # Match aspect ratio of the combined figure: per-axis width derived from the
+    # 2-column layout used when multiple axes exist; height stays at 4 units.
+    combined_ncols = 2 if len(axes) > 1 else 1
+    per_axis_figsize = (12 / combined_ncols, 4)
     for axis_key in axes:
         sub_counts = {axis_key: counts[axis_key]}
         sub_ranges = {axis_key: ranges[axis_key]}
@@ -569,6 +574,7 @@ def _save_separate_figures(
             title=None,
             stacked=stacked,
             colors=colors,
+            figsize=per_axis_figsize,
         )
         export_path = base_path.with_name(f"{base_path.stem}_{axis_key}{base_path.suffix}")
         fig.savefig(export_path, bbox_inches="tight")
