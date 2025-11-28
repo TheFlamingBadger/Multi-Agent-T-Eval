@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from time import perf_counter
 from typing import Dict, List, Optional, Tuple, Union
+from tqdm import tqdm
 
 import mmengine
 
@@ -582,7 +583,9 @@ def _resolve_endpoint_for_selection(
 
 def _extract_route_from_trace(
     trace: object, orchestrator: str
-) -> Tuple[Optional[str], Optional[str], Optional[object], Optional[float], Optional[list]]:
+) -> Tuple[
+    Optional[str], Optional[str], Optional[object], Optional[float], Optional[list]
+]:
     if not isinstance(trace, dict):
         return None, None, None, None, None
     selection = trace.get("selection")
@@ -630,7 +633,9 @@ def _build_prior_routes(prior_data: object, orchestrator: str) -> Dict[str, dict
             invalid_routing_output=invalid,
             routing_elapsed_seconds=elapsed,
             routing_messages=routing_messages,
-            routing_response=trace.get("routing_response") if isinstance(trace, dict) else None,
+            routing_response=(
+                trace.get("routing_response") if isinstance(trace, dict) else None
+            ),
         )
     return routes
 
@@ -744,7 +749,9 @@ def synthesize(
                     "invalid_routing_output": invalid_flag,
                     "routing_response": routing_raw,
                     "routing_elapsed_seconds": elapsed,
-                    "routing_reused_from": router_results_path if prior_routes else None,
+                    "routing_reused_from": (
+                        router_results_path if prior_routes else None
+                    ),
                     "cached_completion": True,
                     "cached_source_path": str(source_paths[endpoint]),
                     "steps": [
@@ -857,7 +864,9 @@ if __name__ == "__main__":
         f"Tested {tested_num} samples, left {test_num} samples, total {total_num} samples"
     )
     if use_prior_routes:
-        print(f"Reusing routing decisions from {router_results_path}; no new router calls.")
+        print(
+            f"Reusing routing decisions from {router_results_path}; no new router calls."
+        )
     output_file_path = os.path.join(args.out_dir, args.out_name)
     if test_num != 0:
         prediction = synthesize(

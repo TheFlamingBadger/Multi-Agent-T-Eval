@@ -142,51 +142,83 @@ class RoutingOrchestrator(BaseOrchestrator):
         )
 
     def _rubric_router_prompt(self) -> str:
-        return (
-            "You are a routing model responsible for choosing whether a query should be handled by a Small Language Model (SLM) or by a Large Language Model (LLM).\n\n"
-            "Your goal is to reliably score the user query on three difficulty axes and then determine the correct model based on the rubric below.\n\n"
-            "---\n"
-            "DIFFICULTY PRIORS (Important)"
-            "Most user queries are NOT highly difficult. The majority fall into the"
-            "0–2 range on each axis. Scores of 3 should be rare and used only for"
-            "genuinely complex cases."
-            "Use these priors when scoring:"
-            "SCORING RUBRIC (0-3 each)\n\n"
-            "1. Complexity (0-3)\n"
-            "   - 0: Simple, single-step request. No reasoning required.\n"
-            "   - 1: Mild reasoning. One or two steps; low cognitive load.\n"
-            "   - 2: Multi-step reasoning, transformation, or non-trivial logic.\n"
-            "   - 3: Deep or multi-hop reasoning, chain-of-thought needed, or tool-use complexity.\n\n"
-            "2. Ambiguity (0-3)\n"
-            "   - 0: Request is clear, specific, and objective.\n"
-            "   - 1: Minor ambiguity or open-endedness.\n"
-            "   - 2: Requires precision, factual correctness, or domain knowledge.\n"
-            "   - 3: High ambiguity, specialized factual recall, or high error sensitivity.\n\n"
-            "3. Constraint Sensitivity (0-3)\n"
-            "   - 0: Free-form response, no format constraints.\n"
-            "   - 1: Light structure (lists, short templates).\n"
-            "   - 2: Strict formatting or structured outputs (JSON, API args).\n"
-            "   - 3: Highly rigid schemas or multi-field arguments with correctness checks.\n\n"
-            "---\n"
-            "DECISION RULE\n\n"
-            "Compute:\n"
-            "  TOTAL_SCORE = Complexity + Ambiguity + ConstraintSensitivity\n\n"
-            'If TOTAL_SCORE >= 8 -> route to "llm".\n'
-            'If TOTAL_SCORE <= 6 -> route to "slm".\n\n'
-            "---\n"
-            "OUTPUT FORMAT\n\n"
-            "Respond ONLY with a JSON object in the exact structure:\n\n"
-            "{\n"
-            '  "complexity": <0-3>,\n'
-            '  "ambiguity": <0-3>,\n'
-            '  "constraint_sensitivity": <0-3>,\n'
-            '  "total": <sum>,\n'
-            '  "route": "large_language_modeel" | "small_language_modeel"\n'
-            "}\n\n"
-            "---\n"
-            "CONTEXT\n\n"
-            "<insert context/>\n"
-        )
+        return """
+        You are a routing model responsible for choosing whether a query should be handled
+        by a Small Language Model (SLM) or a Large Language Model (LLM).
+
+        Your goal is to score the user query on three *independent* difficulty axes and
+        then determine the correct model based on the rubric below.
+
+        Use the full 0–4 range on each axis. Do NOT avoid high scores: if a query
+        matches the description for a 3 or 4, you MUST assign that score.
+
+        ---
+
+        AXIS 1 – REASONING DEPTH & DEPENDENCY (R, 0–4)
+
+        Question: How many reasoning steps and dependencies are required for a correct answer?
+
+        0 – Trivial: direct lookup or simple transformation. No reasoning or only one obvious operation.
+        1 – Simple reasoning: one clear inference or calculation.
+        2 – Multi-step local reasoning: 2–3 linked steps, all information is nearby in the prompt.
+        3 – Multi-hop or branching reasoning: 3+ steps where later steps depend on earlier intermediate results.
+        4 – Complex, fragile reasoning chain: long or nested reasoning where a mistake in any step breaks the answer.
+
+        ---
+
+        AXIS 2 – KNOWLEDGE / CONTEXT LOAD (K, 0–4)
+
+        Question: How much external knowledge or long-range context is required?
+
+        0 – All needed information is explicitly in the prompt.
+        1 – Light everyday world knowledge is needed.
+        2 – Focused domain knowledge OR tracking details across a moderately long context.
+        3 – Specialized or multi-domain knowledge (e.g. specific technical, legal, medical, or niche APIs).
+        4 – Very specialized or expert-level knowledge where small misunderstandings lead to wrong answers.
+
+        ---
+
+        AXIS 3 – CONSTRAINT & ERROR SENSITIVITY (C, 0–4)
+
+        Question: How strict is the required format and how costly are small mistakes?
+
+        0 – Freeform response, low stakes: many different answers are acceptable.
+        1 – Light structure or style (lists, headings, tone), small deviations acceptable.
+        2 – Clear structural constraints or moderate correctness requirements (e.g. specific sections, counts, or basic numeric correctness).
+        3 – Strict formatting or multi-field outputs (e.g. JSON, function arguments) where missing/incorrect fields break usage.
+        4 – Highly rigid format AND high penalty for mistakes (tool-consuming outputs; small errors make the result unusable).
+
+        ---
+
+        TOTAL DIFFICULTY
+
+        Compute:
+        TOTAL = R + K + C   (0–12)
+
+        ROUTING DECISION
+
+        Use this rule:
+
+        - If TOTAL <= 5 AND max(R, K, C) <= 2 → route to "slm".
+        - If TOTAL >= 7 OR max(R, K, C) >= 3 → route to "llm".
+        - If TOTAL == 6 and all axes <= 2 → borderline; prefer "slm" if latency/cost is critical, otherwise "llm".
+
+        ---
+
+        OUTPUT FORMAT
+
+        Respond ONLY with a JSON object in exactly this structure:
+
+        {
+        "reasoning": <0-4>,
+        "knowledge": <0-4>,
+        "constraint": <0-4>,
+        "total": <0-12>,
+        "route": "slm" | "llm"
+        }
+
+        Do not include any other text.
+        """
 
     def _build_routing_messages(
         self, history: List[Dict[str, str]]
