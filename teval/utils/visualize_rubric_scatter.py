@@ -98,6 +98,18 @@ def parse_args() -> argparse.Namespace:
         help="Optional plot title. Defaults to derived model name.",
     )
     parser.add_argument(
+        "--rubric-model",
+        type=str,
+        default=None,
+        help="Optional rubric model name for x-axis labeling (falls back to derived name).",
+    )
+    parser.add_argument(
+        "--score-model",
+        type=str,
+        default=None,
+        help="Optional scoring model name for y-axis labeling (falls back to derived name).",
+    )
+    parser.add_argument(
         "--no-show",
         action="store_true",
         help="Skip interactive display (headless environments).",
@@ -309,14 +321,21 @@ def _linear_fit(x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, float, float]
     return y_pred, spearman, mae
 
 
-def plot_scatter(points: List[Tuple[int, float]], title: str, export: Optional[Path], show: bool) -> None:
+def plot_scatter(
+    points: List[Tuple[int, float]],
+    title: str,
+    export: Optional[Path],
+    show: bool,
+    rubric_model: str,
+    score_model: str,
+) -> None:
     if not points:
         raise RuntimeError("No overlapping entries between direct and rubric data.")
 
     x_vals = np.array([p[0] for p in points], dtype=float)
     y_vals = np.array([p[1] for p in points], dtype=float)
 
-    fig, ax = plt.subplots(figsize=(12, 4))
+    fig, ax = plt.subplots(figsize=(12, 9))
 
     # Box-and-whisker at each total score.
     grouped: Dict[int, List[float]] = {}
@@ -329,7 +348,7 @@ def plot_scatter(points: List[Tuple[int, float]], title: str, export: Optional[P
         positions=totals_sorted,
         widths=0.6,
         patch_artist=True,
-        boxprops=dict(facecolor=(30 / 255, 212 / 255, 163 / 255), color="black"),
+        boxprops=dict(facecolor="#3d85c6", color="black"),
         medianprops=dict(color="black", linewidth=1.5),
         whiskerprops=dict(color="black"),
         capprops=dict(color="black"),
@@ -341,8 +360,8 @@ def plot_scatter(points: List[Tuple[int, float]], title: str, export: Optional[P
     sort_idx = np.argsort(x_vals)
     ax.plot(x_vals[sort_idx], y_pred[sort_idx], color="red", linewidth=2, label="Best fit")
 
-    ax.set_xlabel("granite_4_4b Estimated Question Difficulty (Rubric Score)", fontsize=12)
-    ax.set_ylabel("azure_gpt4o Test Case Score", fontsize=12)
+    ax.set_xlabel(f"Total Rubric Score ({rubric_model})", fontsize=12)
+    ax.set_ylabel(f"Test Case Score ({score_model})", fontsize=12)
     ax.grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
     ax.set_ylim(0, 1.05)
 
@@ -387,7 +406,24 @@ def main() -> None:
     rubric_totals = collect_rubric_totals(rubric_dir)
     points = _prepare_points(direct_scores, rubric_totals)
 
-    plot_scatter(points, args.title, args.export, not args.no_show)
+    rubric_model = args.rubric_model
+    score_model = args.score_model
+
+    if not rubric_model:
+        rubric_summary = _discover_summary_file(rubric_dir)
+        if rubric_summary:
+            rubric_model = derive_model_name(rubric_summary.name)
+        else:
+            rubric_model = rubric_dir.name
+
+    if not score_model:
+        direct_summary = _discover_summary_file(direct_dir)
+        if direct_summary:
+            score_model = derive_model_name(direct_summary.name)
+        else:
+            score_model = direct_dir.name
+
+    plot_scatter(points, args.title, args.export, not args.no_show, rubric_model, score_model)
 
 
 if __name__ == "__main__":
