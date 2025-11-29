@@ -316,7 +316,7 @@ def plot_scatter(points: List[Tuple[int, float]], title: str, export: Optional[P
     x_vals = np.array([p[0] for p in points], dtype=float)
     y_vals = np.array([p[1] for p in points], dtype=float)
 
-    fig, ax = plt.subplots(figsize=(9, 6))
+    fig, ax = plt.subplots(figsize=(12, 4))
 
     # Box-and-whisker at each total score.
     grouped: Dict[int, List[float]] = {}
@@ -329,11 +329,11 @@ def plot_scatter(points: List[Tuple[int, float]], title: str, export: Optional[P
         positions=totals_sorted,
         widths=0.6,
         patch_artist=True,
-        boxprops=dict(facecolor="#9ecae1", color="black"),
+        boxprops=dict(facecolor=(30 / 255, 212 / 255, 163 / 255), color="black"),
         medianprops=dict(color="black", linewidth=1.5),
         whiskerprops=dict(color="black"),
         capprops=dict(color="black"),
-        flierprops=dict(markeredgecolor="#08519c", markerfacecolor="#08519c", markersize=4),
+        showfliers=False,
     )
 
     # Best-fit line computed over individual points.
@@ -341,9 +341,8 @@ def plot_scatter(points: List[Tuple[int, float]], title: str, export: Optional[P
     sort_idx = np.argsort(x_vals)
     ax.plot(x_vals[sort_idx], y_pred[sort_idx], color="red", linewidth=2, label="Best fit")
 
-    ax.set_xlabel("granite_4_4b Estimated Question Difficulty (Rubric Score)")
-    ax.set_ylabel("azure_gpt4o Test Case Score")
-    ax.set_title(title)
+    ax.set_xlabel("granite_4_4b Estimated Question Difficulty (Rubric Score)", fontsize=12)
+    ax.set_ylabel("azure_gpt4o Test Case Score", fontsize=12)
     ax.grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
     ax.set_ylim(0, 1.05)
 
@@ -358,7 +357,11 @@ def plot_scatter(points: List[Tuple[int, float]], title: str, export: Optional[P
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8, linewidth=0.5),
     )
 
-    fig.tight_layout()
+    if title:
+        fig.suptitle(title, fontsize=14)
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
+    else:
+        fig.tight_layout()
 
     if export:
         export_path = export.expanduser().resolve()
@@ -384,17 +387,7 @@ def main() -> None:
     rubric_totals = collect_rubric_totals(rubric_dir)
     points = _prepare_points(direct_scores, rubric_totals)
 
-    title = args.title
-    if not title:
-        direct_summary = _discover_summary_file(direct_dir)
-        rubric_summary = _discover_summary_file(rubric_dir)
-        name_parts = []
-        for summary in (direct_summary, rubric_summary):
-            if summary:
-                name_parts.append(derive_model_name(summary.name))
-        title = " vs ".join(name_parts) if name_parts else "Rubric vs Evaluation"
-
-    plot_scatter(points, title, args.export, not args.no_show)
+    plot_scatter(points, args.title, args.export, not args.no_show)
 
 
 if __name__ == "__main__":
