@@ -495,6 +495,7 @@ def plot_columns(
         ax = axes_flat[idx]
         score_range = ranges[axis_key]
         x = list(score_range)
+        axis_label = axis_key.replace("_", " ").title()
         if stacked:
             bottoms = np.zeros(len(score_range))
             for series_idx, label in enumerate(series_order):
@@ -528,9 +529,10 @@ def plot_columns(
             ax.set_xticks(x)
 
         ax.set_xticks(x)
-        ax.set_xlabel("Score")
-        ax.set_ylabel("Count")
-        ax.set_title(axis_key.replace("_", " ").title())
+        ax.set_xlabel(f"Rubric Score ({axis_label})", fontsize=12)
+        ax.set_ylabel("Test Case Count", fontsize=12)
+        ax.set_title(axis_label)
+        ax.tick_params(axis="both", labelsize=11)
         ax.grid(axis="y", linestyle=":", linewidth=0.8, alpha=0.7)
         handles, labels = ax.get_legend_handles_labels()
         if handles:
@@ -582,6 +584,36 @@ def _save_separate_figures(
         print(f"Saved {axis_key} chart to {export_path}")
 
 
+def _compute_distribution_stats(
+    counts: Dict[str, Dict[str, List[int]]],
+    ranges: Dict[str, List[int]],
+    axes: Sequence[str],
+) -> Dict[str, Dict[str, Optional[float]]]:
+    stats: Dict[str, Dict[str, Optional[float]]] = {}
+    for axis in axes:
+        score_range = ranges[axis]
+        series_counts = counts.get(axis, {})
+        total_counts = [0] * len(score_range)
+        for series in series_counts.values():
+            for idx, val in enumerate(series):
+                total_counts[idx] += val
+        total = sum(total_counts)
+        if total == 0:
+            stats[axis] = {"mean": None, "std": None, "skew": None}
+            continue
+        scores = np.array(score_range, dtype=float)
+        freq = np.array(total_counts, dtype=float)
+        mean = float(np.sum(scores * freq) / total)
+        variance = float(np.sum(freq * (scores - mean) ** 2) / total)
+        std = float(np.sqrt(variance))
+        if std == 0:
+            skew = 0.0
+        else:
+            skew = float(np.sum(freq * ((scores - mean) / std) ** 3) / total)
+        stats[axis] = {"mean": mean, "std": std, "skew": skew}
+    return stats
+
+
 def main() -> None:
     args = parse_args()
     run_dir = args.run_dir.expanduser().resolve()
@@ -627,6 +659,18 @@ def main() -> None:
         stacked = True
     else:
         counts = _build_unstacked_counts(records, ranges)
+
+    stats = _compute_distribution_stats(counts, ranges, axes)
+    print("Rubric score distribution stats (aggregate across series):")
+    for axis in axes:
+        axis_label = axis.replace("_", " ").title()
+        axis_stats = stats.get(axis, {})
+        mean = axis_stats.get("mean")
+        std = axis_stats.get("std")
+        skew = axis_stats.get("skew")
+        def fmt(val: Optional[float]) -> str:
+            return f"{val:.3f}" if isinstance(val, float) else "N/A"
+        print(f"  {axis_label:<12}  mean: {fmt(mean)}  std: {fmt(std)}  skew: {fmt(skew)}")
 
     fig = plot_columns(
         counts,
