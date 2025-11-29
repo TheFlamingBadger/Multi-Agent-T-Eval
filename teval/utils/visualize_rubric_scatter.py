@@ -366,6 +366,10 @@ def plot_scatter(
     ax.set_xlabel(f"Total Rubric Score ({rubric_model})", fontsize=label_fontsize)
     ax.set_ylabel(f"Test Case Score ({score_model})", fontsize=label_fontsize)
     ax.tick_params(axis="both", labelsize=tick_fontsize)
+    if totals_sorted:
+        min_total = int(min(totals_sorted))
+        max_total = int(max(totals_sorted))
+        ax.set_xticks(list(range(min_total, max_total + 1)))
     ax.grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
     ax.set_ylim(0, 1.05)
 
