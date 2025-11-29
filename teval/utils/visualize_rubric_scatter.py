@@ -360,24 +360,29 @@ def plot_scatter(
     sort_idx = np.argsort(x_vals)
     ax.plot(x_vals[sort_idx], y_pred[sort_idx], color="red", linewidth=2, label="Best fit")
 
-    ax.set_xlabel(f"Total Rubric Score ({rubric_model})", fontsize=12)
-    ax.set_ylabel(f"Test Case Score ({score_model})", fontsize=12)
+    label_fontsize = 14
+    tick_fontsize = 12
+
+    ax.set_xlabel(f"Total Rubric Score ({rubric_model})", fontsize=label_fontsize)
+    ax.set_ylabel(f"Test Case Score ({score_model})", fontsize=label_fontsize)
+    ax.tick_params(axis="both", labelsize=tick_fontsize)
     ax.grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
     ax.set_ylim(0, 1.05)
 
     text = f"Spearman = {spearman:.3f}\nMAE = {mae:.3f}"
     ax.text(
         0.02,
-        0.98,
+        0.02,
         text,
         transform=ax.transAxes,
         ha="left",
-        va="top",
+        va="bottom",
+        fontsize=12,
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8, linewidth=0.5),
     )
 
     if title:
-        fig.suptitle(title, fontsize=14)
+        fig.suptitle(title, fontsize=16)
         fig.tight_layout(rect=(0, 0, 1, 0.96))
     else:
         fig.tight_layout()
