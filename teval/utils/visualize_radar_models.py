@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import matplotlib as mpl
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
@@ -86,9 +87,9 @@ def plot_radar(
     font_size = 14
     plt.rcParams.update({"font.size": font_size})
 
-    palette = plt.rcParams.get("axes.prop_cycle").by_key().get("color", [])
+    palette = mpl.rcParamsDefault.get("axes.prop_cycle", plt.rcParams["axes.prop_cycle"]).by_key().get("color", [])
     if not palette:
-        palette = list(plt.cm.get_cmap("tab20").colors)
+        palette = list(plt.cm.get_cmap("tab10").colors)
 
     def _color_for_label(label: str) -> str:
         digest = hashlib.md5(label.encode("utf-8")).hexdigest()
