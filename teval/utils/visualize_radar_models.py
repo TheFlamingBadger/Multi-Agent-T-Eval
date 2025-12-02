@@ -101,11 +101,17 @@ def plot_radar(
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(categories, fontsize=font_size)
+    ax.tick_params(axis="x", pad=18)
     ax.set_ylim(0, 1)
     ax.set_yticks(np.linspace(0, 1, 6))
     ax.set_yticklabels([f"{tick:.1f}" for tick in np.linspace(0, 1, 6)], fontsize=font_size)
     ax.grid(True, linestyle=":", linewidth=0.8)
-    ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.1), prop={"size": font_size})
+    ax.legend(
+        loc="center left",
+        bbox_to_anchor=(1.15, 0.5),
+        prop={"size": font_size},
+        borderaxespad=1.0,
+    )
 
     fig.tight_layout()
     return fig, ax
