@@ -28,10 +28,10 @@ def parse_args() -> argparse.Namespace:
         help="One or more paths to model summary JSON files.",
     )
     parser.add_argument(
-        "--title",
+        "--model-names",
         type=str,
         default=None,
-        help="Optional diagram title. Defaults to the parent directory name when a single file is provided.",
+        help="Comma-separated names to use for each result file (must match the number of provided paths).",
     )
     parser.add_argument(
         "--export",
@@ -42,12 +42,6 @@ def parse_args() -> argparse.Namespace:
         help="Optional path to save the figure (e.g., output.png). Shows the plot interactively regardless.",
     )
     return parser.parse_args()
-
-
-def _default_title(paths: Sequence[Path]) -> str:
-    if len(paths) == 1:
-        return paths[0].parent.name or paths[0].parent.as_posix()
-    return "Model Comparison"
 
 
 def _load_scores(result_path: Path) -> Tuple[List[str], List[Optional[float]], Optional[float], str]:
@@ -61,12 +55,14 @@ def _load_scores(result_path: Path) -> Tuple[List[str], List[Optional[float]], O
     return categories, scores, overall, label
 
 
-def _prepare_series(paths: Iterable[Path]):
+def _prepare_series(paths: Iterable[Path], model_names: Optional[Sequence[str]] = None):
     reference_categories: Optional[List[str]] = None
     series: List[Tuple[str, List[Optional[float]], Optional[float]]] = []
 
-    for path in paths:
+    for idx, path in enumerate(paths):
         categories, scores, overall, label = _load_scores(path)
+        if model_names is not None:
+            label = model_names[idx]
         if reference_categories is None:
             reference_categories = categories
         elif categories != reference_categories:
@@ -84,10 +80,11 @@ def _prepare_series(paths: Iterable[Path]):
 def plot_radar(
     categories: Sequence[str],
     series: Sequence[Tuple[str, Sequence[Optional[float]], Optional[float]]],
-    *,
-    title: Optional[str] = None,
 ):
     """Plot a radar chart for one or more model score series."""
+    font_size = 14
+    plt.rcParams.update({"font.size": font_size})
+
     angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
     angles += angles[:1]  # close the loop
 
@@ -103,13 +100,12 @@ def plot_radar(
         ax.fill(angles, values, alpha=0.15)
 
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(categories)
+    ax.set_xticklabels(categories, fontsize=font_size)
     ax.set_ylim(0, 1)
     ax.set_yticks(np.linspace(0, 1, 6))
-    ax.set_yticklabels([f"{tick:.1f}" for tick in np.linspace(0, 1, 6)])
-    ax.set_title(title or "Radar Diagram", pad=20)
+    ax.set_yticklabels([f"{tick:.1f}" for tick in np.linspace(0, 1, 6)], fontsize=font_size)
     ax.grid(True, linestyle=":", linewidth=0.8)
-    ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.1))
+    ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.1), prop={"size": font_size})
 
     fig.tight_layout()
     return fig, ax
@@ -118,10 +114,16 @@ def plot_radar(
 def main():
     args = parse_args()
     paths = [Path(p).expanduser().resolve() for p in args.result_paths]
-    title = args.title or _default_title(paths)
+    model_names = None
+    if args.model_names:
+        model_names = [name.strip() for name in args.model_names.split(",") if name.strip()]
+        if len(model_names) != len(paths):
+            raise ValueError(
+                f"Expected {len(paths)} model names for {len(paths)} files, got {len(model_names)}"
+            )
 
-    categories, series = _prepare_series(paths)
-    fig, _ = plot_radar(categories, series, title=title)
+    categories, series = _prepare_series(paths, model_names)
+    fig, _ = plot_radar(categories, series)
 
     if args.export:
         export_path = Path(args.export).expanduser()
