@@ -1,6 +1,7 @@
 """Radar diagram visualizer for one or more orchestrator evaluation result files."""
 
 import argparse
+import hashlib
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
@@ -85,6 +86,15 @@ def plot_radar(
     font_size = 14
     plt.rcParams.update({"font.size": font_size})
 
+    palette = plt.rcParams.get("axes.prop_cycle").by_key().get("color", [])
+    if not palette:
+        palette = list(plt.cm.get_cmap("tab20").colors)
+
+    def _color_for_label(label: str) -> str:
+        digest = hashlib.md5(label.encode("utf-8")).hexdigest()
+        idx = int(digest, 16) % len(palette)
+        return palette[idx]
+
     angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
     angles += angles[:1]  # close the loop
 
@@ -96,8 +106,9 @@ def plot_radar(
         display_label = label
         if overall is not None:
             display_label = f"{label} (overall {overall:.2f})"
-        ax.plot(angles, values, linewidth=2, label=display_label)
-        ax.fill(angles, values, alpha=0.15)
+        color = _color_for_label(label)
+        ax.plot(angles, values, linewidth=2, label=display_label, color=color)
+        ax.fill(angles, values, alpha=0.15, color=color)
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(categories, fontsize=font_size)
