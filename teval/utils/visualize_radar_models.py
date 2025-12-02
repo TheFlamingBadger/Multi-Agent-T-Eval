@@ -107,13 +107,14 @@ def plot_radar(
     ax.set_yticklabels([f"{tick:.1f}" for tick in np.linspace(0, 1, 6)], fontsize=font_size)
     ax.grid(True, linestyle=":", linewidth=0.8)
     ax.legend(
-        loc="center left",
-        bbox_to_anchor=(1.15, 0.5),
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.12),
         prop={"size": font_size},
         borderaxespad=1.0,
+        ncol=1,
     )
 
-    fig.tight_layout()
+    fig.subplots_adjust(top=0.92, bottom=0.22)
     return fig, ax
 
 
