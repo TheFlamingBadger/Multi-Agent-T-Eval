@@ -8,6 +8,7 @@ from .fallback_model import FallbackModelOrchestrator
 from .agentic import AgenticOrchestrator, AgenticReasoningToolOrchestrator
 from .routing import RoutingOrchestrator
 from .network import NetworkOrchestrator
+from .router_at_n import RouterAtNOrchestrator
 
 __all__ = [
     'BaseOrchestrator',
@@ -20,5 +21,6 @@ __all__ = [
     'AgenticOrchestrator',
     'AgenticReasoningToolOrchestrator',
     'RoutingOrchestrator',
+    'RouterAtNOrchestrator',
     'NetworkOrchestrator',
 ]

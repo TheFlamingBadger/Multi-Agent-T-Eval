@@ -1,4 +1,5 @@
 devices_override=""
+router_votes=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -8,6 +9,14 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             devices_override="$2"
+            shift 2
+            ;;
+        -n|--router-votes)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: -n/--router-votes requires a value (e.g., -n 3)"
+                exit 1
+            fi
+            router_votes="$2"
             shift 2
             ;;
         *)
@@ -39,8 +48,8 @@ if [ -z "$4" ]; then
 else
     orchestrator=$4
 fi
-valid_orchestrators=("direct" "thinking" "react" "reasoning_tool" "fallback_model" "agentic" "agentic_reasoning_tool" "routing")
-valid_orchestrators=("direct" "thinking" "react" "reasoning_tool" "fallback_model" "agentic" "agentic_reasoning_tool" "routing" "network")
+valid_orchestrators=("direct" "thinking" "react" "reasoning_tool" "fallback_model" "agentic" "agentic_reasoning_tool" "routing" "router_at_n")
+valid_orchestrators=("direct" "thinking" "react" "reasoning_tool" "fallback_model" "agentic" "agentic_reasoning_tool" "routing" "router_at_n" "network")
 if [[ ! " ${valid_orchestrators[*]} " =~ " ${orchestrator} " ]]; then
     echo "Error: unsupported orchestrator '$orchestrator'. Valid options: ${valid_orchestrators[*]}"
     exit 1
@@ -53,6 +62,8 @@ else
     meta_template=$5
 fi
 extra_args=("${@:6}")
+router_votes=${router_votes:-3}
+extra_args+=("-n" "$router_votes")
 echo "Model meta_template: $meta_template"
 if [ ${#extra_args[@]} -gt 0 ]; then
     echo "Forwarding extra args to test.py: ${extra_args[*]}"

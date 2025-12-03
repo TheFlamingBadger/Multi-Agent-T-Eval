@@ -10,6 +10,7 @@ from teval.orchestrators import (
     AgenticOrchestrator,
     AgenticReasoningToolOrchestrator,
     RoutingOrchestrator,
+    RouterAtNOrchestrator,
     NetworkOrchestrator,
 )
 from lagent.llms.huggingface import HFTransformerCasualLM, HFTransformerChat
@@ -63,11 +64,12 @@ def parse_args():
                            'agentic',
                            'agentic_reasoning_tool',
                            'routing',
+                           'router_at_n',
                            'network',
                        ],
                        help=(
                            'Orchestration strategy: direct, thinking, react, reasoning_tool, '
-                           'fallback_model, agentic, agentic_reasoning_tool, routing, or network'
+                           'fallback_model, agentic, agentic_reasoning_tool, routing, router_at_n, or network'
                        ))
     parser.add_argument('--thinking_prompt', type=str, 
                        default="First, let's think step by step about how to approach this.",
@@ -89,6 +91,14 @@ def parse_args():
         type=str,
         dest='network_config',
         help=argparse.SUPPRESS,  # dash alias
+    )
+    parser.add_argument(
+        '-n',
+        '--router-votes',
+        dest='router_vote_count',
+        type=int,
+        default=3,
+        help='Number of router queries for router_at_n; routes to SLM only if all votes pick SLM.',
     )
     args = parser.parse_args()
     return args
@@ -191,7 +201,7 @@ if __name__ == '__main__':
     args = parse_args()
     if args.naive_prompt and args.rubric_prompt:
         raise ValueError("Choose at most one routing prompt variant.")
-    if args.orchestrator == 'routing':
+    if args.orchestrator in {'routing', 'router_at_n'}:
         routing_option = 'rubric' if args.rubric_prompt else ('naive' if args.naive_prompt else None)
         if routing_option:
             args.out_dir = _append_routing_option_to_out_dir(args.out_dir, routing_option)
@@ -243,6 +253,15 @@ if __name__ == '__main__':
                     helper_env_path=args.azure_env_path,
                     use_naive_prompt=args.naive_prompt,
                     use_rubric_prompt=args.rubric_prompt,
+                )
+            elif args.orchestrator == 'router_at_n':
+                router_llm = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
+                orchestrator = RouterAtNOrchestrator(
+                    router_llm,
+                    helper_env_path=args.azure_env_path,
+                    use_naive_prompt=args.naive_prompt,
+                    use_rubric_prompt=args.rubric_prompt,
+                    router_votes=args.router_vote_count,
                 )
             elif args.orchestrator == 'agentic_reasoning_tool':
                 base_orchestrator = AzureOpenAIOrchestrator(env_path=args.azure_env_path)
@@ -303,6 +322,14 @@ if __name__ == '__main__':
                     helper_env_path=args.azure_env_path,
                     use_naive_prompt=args.naive_prompt,
                     use_rubric_prompt=args.rubric_prompt,
+                )
+            elif args.orchestrator == 'router_at_n':
+                orchestrator = RouterAtNOrchestrator(
+                    llm,
+                    helper_env_path=args.azure_env_path,
+                    use_naive_prompt=args.naive_prompt,
+                    use_rubric_prompt=args.rubric_prompt,
+                    router_votes=args.router_vote_count,
                 )
             elif args.orchestrator == 'agentic_reasoning_tool':
                 orchestrator = AgenticReasoningToolOrchestrator(
