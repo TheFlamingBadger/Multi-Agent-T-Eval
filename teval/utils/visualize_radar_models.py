@@ -1,7 +1,6 @@
 """Radar diagram visualizer for one or more orchestrator evaluation result files."""
 
 import argparse
-import hashlib
 import matplotlib as mpl
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
@@ -43,6 +42,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional path to save the figure (e.g., output.png). Shows the plot interactively regardless.",
     )
+    parser.add_argument(
+        "--colours",
+        type=str,
+        default=None,
+        help="Comma-separated colours to use for each result file (must match the number of provided paths).",
+    )
     return parser.parse_args()
 
 
@@ -82,6 +87,7 @@ def _prepare_series(paths: Iterable[Path], model_names: Optional[Sequence[str]] 
 def plot_radar(
     categories: Sequence[str],
     series: Sequence[Tuple[str, Sequence[Optional[float]], Optional[float]]],
+    colours: Optional[Sequence[str]] = None,
 ):
     """Plot a radar chart for one or more model score series."""
     font_size = 14
@@ -91,23 +97,21 @@ def plot_radar(
     if not palette:
         palette = list(plt.cm.get_cmap("tab10").colors)
 
-    def _color_for_label(label: str) -> str:
-        digest = hashlib.md5(label.encode("utf-8")).hexdigest()
-        idx = int(digest, 16) % len(palette)
-        return palette[idx]
-
     angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
     angles += angles[:1]  # close the loop
 
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={"polar": True})
 
-    for label, scores, overall in series:
+    for idx, (label, scores, overall) in enumerate(series):
         values = [score if score is not None else 0.0 for score in scores]
         values += values[:1]
         display_label = label
         if overall is not None:
             display_label = f"{label} (overall {overall:.2f})"
-        color = _color_for_label(label)
+        if colours is not None:
+            color = colours[idx]
+        else:
+            color = palette[idx % len(palette)]
         ax.plot(angles, values, linewidth=2, label=display_label, color=color)
         ax.fill(angles, values, alpha=0.15, color=color)
 
@@ -141,8 +145,16 @@ def main():
                 f"Expected {len(paths)} model names for {len(paths)} files, got {len(model_names)}"
             )
 
+    colours = None
+    if args.colours:
+        colours = [colour.strip() for colour in args.colours.split(",") if colour.strip()]
+        if len(colours) != len(paths):
+            raise ValueError(
+                f"Expected {len(paths)} colours for {len(paths)} files, got {len(colours)}"
+            )
+
     categories, series = _prepare_series(paths, model_names)
-    fig, _ = plot_radar(categories, series)
+    fig, _ = plot_radar(categories, series, colours)
 
     if args.export:
         export_path = Path(args.export).expanduser()

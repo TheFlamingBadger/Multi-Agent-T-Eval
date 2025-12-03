@@ -28,6 +28,7 @@ except ModuleNotFoundError:
             resolve_category_files,
         )
     except ModuleNotFoundError:
+
         def build_category_file_map(model_name: str) -> Dict[str, List[str]]:
             return {
                 "Instruct": [f"instruct_{model_name}.json"],
@@ -59,6 +60,7 @@ except ModuleNotFoundError:
         def derive_model_name(result_path: str) -> str:
             stem = Path(result_path).stem
             return stem[:-3] if stem.endswith("_-1") else stem
+
 
 if __package__ in (None, ""):
     from teval.utils.format_load import format_load
@@ -335,7 +337,7 @@ def plot_scatter(
     x_vals = np.array([p[0] for p in points], dtype=float)
     y_vals = np.array([p[1] for p in points], dtype=float)
 
-    fig, ax = plt.subplots(figsize=(12, 9))
+    fig, ax = plt.subplots(figsize=(4, 3))
 
     # Box-and-whisker at each total score.
     grouped: Dict[int, List[float]] = {}
@@ -358,7 +360,9 @@ def plot_scatter(
     # Best-fit line computed over individual points.
     y_pred, spearman, mae = _linear_fit(x_vals, y_vals)
     sort_idx = np.argsort(x_vals)
-    ax.plot(x_vals[sort_idx], y_pred[sort_idx], color="red", linewidth=2, label="Best fit")
+    ax.plot(
+        x_vals[sort_idx], y_pred[sort_idx], color="red", linewidth=2, label="Best fit"
+    )
 
     label_fontsize = 14
     tick_fontsize = 12
@@ -432,7 +436,9 @@ def main() -> None:
         else:
             score_model = direct_dir.name
 
-    plot_scatter(points, args.title, args.export, not args.no_show, rubric_model, score_model)
+    plot_scatter(
+        points, args.title, args.export, not args.no_show, rubric_model, score_model
+    )
 
 
 if __name__ == "__main__":
