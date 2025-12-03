@@ -315,12 +315,11 @@ def _spearman_corr(x: np.ndarray, y: np.ndarray) -> float:
     return float(cov / np.sqrt(x_var * y_var))
 
 
-def _linear_fit(x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, float, float]:
+def _linear_fit(x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, float]:
     slope, intercept = np.polyfit(x, y, 1)
     y_pred = slope * x + intercept
-    mae = float(np.mean(np.abs(y - y_pred)))
     spearman = _spearman_corr(x, y)
-    return y_pred, spearman, mae
+    return y_pred, spearman
 
 
 def plot_scatter(
@@ -337,7 +336,7 @@ def plot_scatter(
     x_vals = np.array([p[0] for p in points], dtype=float)
     y_vals = np.array([p[1] for p in points], dtype=float)
 
-    fig, ax = plt.subplots(figsize=(4, 3))
+    fig, ax = plt.subplots(figsize=(6, 4))
 
     # Box-and-whisker at each total score.
     grouped: Dict[int, List[float]] = {}
@@ -358,10 +357,14 @@ def plot_scatter(
     )
 
     # Best-fit line computed over individual points.
-    y_pred, spearman, mae = _linear_fit(x_vals, y_vals)
+    y_pred, spearman = _linear_fit(x_vals, y_vals)
     sort_idx = np.argsort(x_vals)
     ax.plot(
-        x_vals[sort_idx], y_pred[sort_idx], color="red", linewidth=2, label="Best fit"
+        x_vals[sort_idx],
+        y_pred[sort_idx],
+        color="red",
+        linewidth=2,
+        label="Linear Line of Best Fit",
     )
 
     label_fontsize = 14
@@ -377,7 +380,7 @@ def plot_scatter(
     ax.grid(True, linestyle=":", linewidth=0.8, alpha=0.7)
     ax.set_ylim(0, 1.05)
 
-    text = f"Spearman = {spearman:.3f}\nMAE = {mae:.3f}"
+    text = f"Spearman = {spearman:.3f}"
     ax.text(
         0.02,
         0.02,
@@ -388,6 +391,8 @@ def plot_scatter(
         fontsize=12,
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8, linewidth=0.5),
     )
+
+    ax.legend(loc="upper left", fontsize=12)
 
     if title:
         fig.suptitle(title, fontsize=16)
