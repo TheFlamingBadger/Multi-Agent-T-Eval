@@ -126,3 +126,7 @@ results/
 *.py~
 *.sh~
 data/*.json
+
+# Result files
+*.png
+*.csv
