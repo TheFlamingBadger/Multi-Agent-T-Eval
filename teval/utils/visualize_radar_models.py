@@ -51,7 +51,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_scores(result_path: Path) -> Tuple[List[str], List[Optional[float]], Optional[float], str]:
+def _load_scores(
+    result_path: Path,
+) -> Tuple[List[str], List[Optional[float]], Optional[float], str]:
     """Load summary JSON and compute per-category scores."""
     data = mmengine.load(result_path)
     final_scores, category_scores = compute_scores(data)
@@ -93,26 +95,27 @@ def plot_radar(
     font_size = 14
     plt.rcParams.update({"font.size": font_size})
 
-    palette = mpl.rcParamsDefault.get("axes.prop_cycle", plt.rcParams["axes.prop_cycle"]).by_key().get("color", [])
+    palette = (
+        mpl.rcParamsDefault.get("axes.prop_cycle", plt.rcParams["axes.prop_cycle"])
+        .by_key()
+        .get("color", [])
+    )
     if not palette:
         palette = list(plt.cm.get_cmap("tab10").colors)
 
     angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
     angles += angles[:1]  # close the loop
 
-    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={"polar": True})
+    fig, ax = plt.subplots(figsize=(7.5, 6), subplot_kw={"polar": True})
 
-    for idx, (label, scores, overall) in enumerate(series):
+    for idx, (label, scores, _) in enumerate(series):
         values = [score if score is not None else 0.0 for score in scores]
         values += values[:1]
-        display_label = label
-        if overall is not None:
-            display_label = f"{label} (overall {overall:.2f})"
         if colours is not None:
             color = colours[idx]
         else:
             color = palette[idx % len(palette)]
-        ax.plot(angles, values, linewidth=2, label=display_label, color=color)
+        ax.plot(angles, values, linewidth=2, label=label, color=color)
         ax.fill(angles, values, alpha=0.15, color=color)
 
     ax.set_xticks(angles[:-1])
@@ -120,17 +123,19 @@ def plot_radar(
     ax.tick_params(axis="x", pad=18)
     ax.set_ylim(0, 1)
     ax.set_yticks(np.linspace(0, 1, 6))
-    ax.set_yticklabels([f"{tick:.1f}" for tick in np.linspace(0, 1, 6)], fontsize=font_size)
+    ax.set_yticklabels(
+        [f"{tick:.1f}" for tick in np.linspace(0, 1, 6)], fontsize=font_size
+    )
     ax.grid(True, linestyle=":", linewidth=0.8)
     ax.legend(
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.12),
+        loc="center left",
+        bbox_to_anchor=(1.05, 0.5),
         prop={"size": font_size},
         borderaxespad=1.0,
         ncol=1,
     )
 
-    fig.subplots_adjust(top=0.92, bottom=0.22)
+    fig.subplots_adjust(top=0.92, bottom=0.1, right=0.72)
     return fig, ax
 
 
@@ -139,7 +144,9 @@ def main():
     paths = [Path(p).expanduser().resolve() for p in args.result_paths]
     model_names = None
     if args.model_names:
-        model_names = [name.strip() for name in args.model_names.split(",") if name.strip()]
+        model_names = [
+            name.strip() for name in args.model_names.split(",") if name.strip()
+        ]
         if len(model_names) != len(paths):
             raise ValueError(
                 f"Expected {len(paths)} model names for {len(paths)} files, got {len(model_names)}"
@@ -147,7 +154,9 @@ def main():
 
     colours = None
     if args.colours:
-        colours = [colour.strip() for colour in args.colours.split(",") if colour.strip()]
+        colours = [
+            colour.strip() for colour in args.colours.split(",") if colour.strip()
+        ]
         if len(colours) != len(paths):
             raise ValueError(
                 f"Expected {len(paths)} colours for {len(paths)} files, got {len(colours)}"
