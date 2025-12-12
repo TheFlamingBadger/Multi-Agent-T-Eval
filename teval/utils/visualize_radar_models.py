@@ -129,7 +129,7 @@ def plot_radar(
     ax.grid(True, linestyle=":", linewidth=0.8)
     ax.legend(
         loc="center left",
-        bbox_to_anchor=(1.05, 0.5),
+        bbox_to_anchor=(1.05, 0.33),
         prop={"size": font_size},
         borderaxespad=1.0,
         ncol=1,
