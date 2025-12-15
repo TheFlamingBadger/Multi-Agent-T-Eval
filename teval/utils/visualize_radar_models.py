@@ -92,7 +92,7 @@ def plot_radar(
     colours: Optional[Sequence[str]] = None,
 ):
     """Plot a radar chart for one or more model score series."""
-    font_size = 14
+    font_size = 16
     plt.rcParams.update({"font.size": font_size})
 
     palette = (

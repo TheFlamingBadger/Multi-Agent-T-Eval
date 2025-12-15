@@ -533,7 +533,7 @@ def plot_columns(
         ax.grid(axis="y", linestyle=":", linewidth=0.8, alpha=0.7)
         handles, labels = ax.get_legend_handles_labels()
         if handles:
-            ax.legend(handles, labels, loc="best", framealpha=0.9)
+            ax.legend(handles, labels, loc="best", framealpha=0.9, fontsize=14)
 
     # Hide any unused subplots
     for j in range(idx + 1, len(axes_flat)):
