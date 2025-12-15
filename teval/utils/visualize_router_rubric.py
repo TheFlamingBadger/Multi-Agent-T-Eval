@@ -218,10 +218,14 @@ def _extract_scores(entry: dict) -> Optional[Dict[str, int]]:
         scores = _parse_score_payload(step.get("response"))
         if not scores:
             continue
-        if scores.get("total") == 12:
+        total_score = scores.get("total")
+        if total_score is None:
+            total_score = sum(val for key, val in scores.items() if key != "total")
+        if total_score > 12:
             continue
         if any(key != "total" and value > 4 for key, value in scores.items()):
             continue
+        scores["total"] = total_score
         return scores
     return None
 
