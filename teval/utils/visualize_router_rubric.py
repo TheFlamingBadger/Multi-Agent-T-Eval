@@ -29,6 +29,7 @@ except ModuleNotFoundError:
             resolve_category_files,
         )
     except ModuleNotFoundError:
+
         def build_category_file_map(model_name: str) -> Dict[str, List[str]]:
             return {
                 "Instruct": [f"instruct_{model_name}.json"],
@@ -61,13 +62,21 @@ except ModuleNotFoundError:
             stem = Path(result_path).stem
             return stem[:-3] if stem.endswith("_-1") else stem
 
+
 if __package__ in (None, ""):
     from teval.utils.format_load import format_load
 else:
     from .format_load import format_load
 
 
-DEFAULT_CATEGORY_ORDER = ["Instruct", "Plan", "Reason", "Retrieve", "Understand", "Review"]
+DEFAULT_CATEGORY_ORDER = [
+    "Instruct",
+    "Plan",
+    "Reason",
+    "Retrieve",
+    "Understand",
+    "Review",
+]
 CASE_ID = Tuple[str, str, str]  # (dataset, category, entry_id)
 
 
@@ -332,13 +341,17 @@ def collect_rubric_scores(run_dir: Path) -> Tuple[List[RubricRecord], List[str],
     records: List[RubricRecord] = []
     for category, path in sources:
         for entry in _load_entries_from_path(path):
-            entry_id, payload = entry if isinstance(entry, tuple) else ("", entry)  # backwards compat
+            entry_id, payload = (
+                entry if isinstance(entry, tuple) else ("", entry)
+            )  # backwards compat
             scores = _extract_scores(payload)
             if scores is None:
                 continue
             dataset = _extract_dataset(path.stem, name_aliases) or path.stem
             records.append(
-                RubricRecord(category=category, entry_id=entry_id, scores=scores, dataset=dataset)
+                RubricRecord(
+                    category=category, entry_id=entry_id, scores=scores, dataset=dataset
+                )
             )
 
     return records, category_order, model_name
@@ -432,9 +445,18 @@ def _collect_eval_scores(
 
 
 SCORE_BUCKETS: Dict[str, Tuple[str, str]] = {
-    "llm_better": ("SLM - LLM < -0.5", (240 / 255, 57 / 255, 83 / 255)),      # (240, 57, 83)
-    "llm_marginal": ("-0.5 ≤ SLM - LLM < 0", (255 / 255, 185 / 255, 27 / 255)),  # (255, 185, 27)
-    "slm_not_worse": ("SLM - LLM ≥ 0", (30 / 255, 212 / 255, 163 / 255)),      # (30, 212, 163)
+    "llm_better": (
+        "SLM - LLM < -0.5",
+        (240 / 255, 57 / 255, 83 / 255),
+    ),  # (240, 57, 83)
+    "llm_marginal": (
+        "-0.5 ≤ SLM - LLM < 0",
+        (255 / 255, 185 / 255, 27 / 255),
+    ),  # (255, 185, 27)
+    "slm_not_worse": (
+        "SLM - LLM ≥ 0",
+        (30 / 255, 212 / 255, 163 / 255),
+    ),  # (30, 212, 163)
 }
 
 
@@ -527,9 +549,9 @@ def plot_columns(
             ax.set_xticks(x)
 
         ax.set_xticks(x)
-        ax.set_xlabel(f"Rubric Score ({axis_label})", fontsize=12)
-        ax.set_ylabel("Test Case Count", fontsize=12)
-        ax.tick_params(axis="both", labelsize=11)
+        ax.set_xlabel(f"Rubric Score ({axis_label})", fontsize=15)
+        ax.set_ylabel("Test Case Count", fontsize=15)
+        ax.tick_params(axis="both", labelsize=13)
         ax.grid(axis="y", linestyle=":", linewidth=0.8, alpha=0.7)
         handles, labels = ax.get_legend_handles_labels()
         if handles:
@@ -547,11 +569,11 @@ def _save_separate_figures(
     base_path: Path,
     counts: Dict[str, Dict[str, List[int]]],
     ranges: Dict[str, List[int]],
-        axes: Sequence[str],
-        series_order: Sequence[str],
-        *,
-        stacked: bool,
-        colors: Optional[Dict[str, str]] = None,
+    axes: Sequence[str],
+    series_order: Sequence[str],
+    *,
+    stacked: bool,
+    colors: Optional[Dict[str, str]] = None,
 ) -> None:
     # Match aspect ratio of the combined figure: per-axis width derived from the
     # 2-column layout used when multiple axes exist; height stays at 4 units.
@@ -569,7 +591,9 @@ def _save_separate_figures(
             colors=colors,
             figsize=per_axis_figsize,
         )
-        export_path = base_path.with_name(f"{base_path.stem}_{axis_key}{base_path.suffix}")
+        export_path = base_path.with_name(
+            f"{base_path.stem}_{axis_key}{base_path.suffix}"
+        )
         fig.savefig(export_path, bbox_inches="tight")
         plt.close(fig)
         print(f"Saved {axis_key} chart to {export_path}")
@@ -621,7 +645,11 @@ def main() -> None:
     colors: Optional[Dict[str, str]] = None
 
     if args.stack_type == "subset":
-        group_fn = (lambda record: "All") if args.split_by == "none" else (lambda record: record.category)
+        group_fn = (
+            (lambda record: "All")
+            if args.split_by == "none"
+            else (lambda record: record.category)
+        )
         if args.split_by == "none":
             categories = ["All"]
         counts = _build_group_counts(records, ranges, categories, group_fn=group_fn)
@@ -629,7 +657,9 @@ def main() -> None:
         stacked = True
     elif args.stack_type == "score":
         if not args.slm_path or not args.llm_path:
-            raise ValueError("--slm-path and --llm-path are required when --stack-type score is used.")
+            raise ValueError(
+                "--slm-path and --llm-path are required when --stack-type score is used."
+            )
         slm_dir = args.slm_path.expanduser().resolve()
         llm_dir = args.llm_path.expanduser().resolve()
         for directory in (slm_dir, llm_dir):
@@ -641,9 +671,13 @@ def main() -> None:
         llm_aliases = _normalize_aliases(llm_name, llm_prefix)
         slm_scores = _collect_eval_scores(slm_dir, slm_aliases)
         llm_scores = _collect_eval_scores(llm_dir, llm_aliases)
-        counts, missing = _build_score_bucket_counts(records, ranges, slm_scores, llm_scores)
+        counts, missing = _build_score_bucket_counts(
+            records, ranges, slm_scores, llm_scores
+        )
         if missing:
-            print(f"Warning: skipped {missing} routing entries without matching SLM/LLM scores.")
+            print(
+                f"Warning: skipped {missing} routing entries without matching SLM/LLM scores."
+            )
         series_order = list(SCORE_BUCKETS.keys())
         colors = {bucket: color for bucket, (_, color) in SCORE_BUCKETS.items()}
         stacked = True
@@ -658,9 +692,13 @@ def main() -> None:
         mean = axis_stats.get("mean")
         std = axis_stats.get("std")
         skew = axis_stats.get("skew")
+
         def fmt(val: Optional[float]) -> str:
             return f"{val:.3f}" if isinstance(val, float) else "N/A"
-        print(f"  {axis_label:<12}  mean: {fmt(mean)}  std: {fmt(std)}  skew: {fmt(skew)}")
+
+        print(
+            f"  {axis_label:<12}  mean: {fmt(mean)}  std: {fmt(std)}  skew: {fmt(skew)}"
+        )
 
     fig = plot_columns(
         counts,
@@ -672,7 +710,9 @@ def main() -> None:
     )
 
     if args.separate_files and not args.export:
-        raise ValueError("--separate-files requires --export to specify the base file path.")
+        raise ValueError(
+            "--separate-files requires --export to specify the base file path."
+        )
 
     if args.export:
         export_path = args.export.expanduser().resolve()
