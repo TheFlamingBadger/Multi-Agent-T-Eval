@@ -84,12 +84,6 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing routing outputs (e.g., work_dirs/<model>_routing).",
     )
     parser.add_argument(
-        "--title",
-        type=str,
-        default=None,
-        help="Optional title. Defaults to the run directory name.",
-    )
-    parser.add_argument(
         "--export",
         type=Path,
         default=None,
@@ -213,8 +207,13 @@ def _extract_scores(entry: dict) -> Optional[Dict[str, int]]:
         if step.get("type") != "routing_llm_call":
             continue
         scores = _parse_score_payload(step.get("response"))
-        if scores:
-            return scores
+        if not scores:
+            continue
+        if scores.get("total") == 12:
+            continue
+        if any(key != "total" and value > 4 for key, value in scores.items()):
+            continue
+        return scores
     return None
 
 
@@ -479,7 +478,6 @@ def plot_columns(
     axes: Sequence[str],
     series_order: Sequence[str],
     *,
-    title: Optional[str],
     stacked: bool,
     colors: Optional[Dict[str, str]] = None,
     figsize: Optional[Tuple[float, float]] = None,
@@ -531,7 +529,6 @@ def plot_columns(
         ax.set_xticks(x)
         ax.set_xlabel(f"Rubric Score ({axis_label})", fontsize=12)
         ax.set_ylabel("Test Case Count", fontsize=12)
-        ax.set_title(axis_label)
         ax.tick_params(axis="both", labelsize=11)
         ax.grid(axis="y", linestyle=":", linewidth=0.8, alpha=0.7)
         handles, labels = ax.get_legend_handles_labels()
@@ -542,11 +539,7 @@ def plot_columns(
     for j in range(idx + 1, len(axes_flat)):
         axes_flat[j].set_visible(False)
 
-    if title:
-        fig.suptitle(title, fontsize=14)
-        fig.tight_layout(rect=(0, 0, 1, 0.96))
-    else:
-        fig.tight_layout()
+    fig.tight_layout()
     return fig
 
 
@@ -554,12 +547,11 @@ def _save_separate_figures(
     base_path: Path,
     counts: Dict[str, Dict[str, List[int]]],
     ranges: Dict[str, List[int]],
-    axes: Sequence[str],
-    series_order: Sequence[str],
-    *,
-    title: Optional[str],
-    stacked: bool,
-    colors: Optional[Dict[str, str]] = None,
+        axes: Sequence[str],
+        series_order: Sequence[str],
+        *,
+        stacked: bool,
+        colors: Optional[Dict[str, str]] = None,
 ) -> None:
     # Match aspect ratio of the combined figure: per-axis width derived from the
     # 2-column layout used when multiple axes exist; height stays at 4 units.
@@ -573,7 +565,6 @@ def _save_separate_figures(
             sub_ranges,
             [axis_key],
             series_order,
-            title=None,
             stacked=stacked,
             colors=colors,
             figsize=per_axis_figsize,
@@ -625,7 +616,6 @@ def main() -> None:
         raise RuntimeError(f"No routing rubric scores found under {run_dir}")
 
     ranges, axes = _compute_ranges(records, args.max_total)
-    chart_title = args.title or f"Routing Rubric Distribution ({model_name})"
     series_order: Sequence[str] = ["All"]
     stacked = False
     colors: Optional[Dict[str, str]] = None
@@ -677,7 +667,6 @@ def main() -> None:
         ranges,
         axes,
         series_order,
-        title=None,
         stacked=stacked,
         colors=colors,
     )
@@ -696,7 +685,6 @@ def main() -> None:
                 ranges,
                 axes,
                 series_order,
-                title=chart_title,
                 stacked=stacked,
                 colors=colors,
             )
